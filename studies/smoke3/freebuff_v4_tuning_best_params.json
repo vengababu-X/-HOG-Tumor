@@ -1,0 +1,12 @@
+{
+  "study_name": "freebuff_v4_tuning",
+  "n_trials": 1,
+  "best_value": 0.0,
+  "best_params": {},
+  "elapsed_seconds": 62.922932624816895,
+  "completed_trials": [],
+  "failed_trials": [
+    0
+  ],
+  "has_best_trial": false
+}
