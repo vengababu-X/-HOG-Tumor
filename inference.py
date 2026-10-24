@@ -44,6 +44,7 @@ from config import (
     NORMALIZE_STD,
     NUM_CLASSES,
     REGULATORY_SHORTHAND,
+    TTA_FLIPS,
     TTA_FULL,
     TTA_NUM_SAMPLES,
     TTA_ROTATIONS_DEG,
@@ -64,8 +65,17 @@ from preprocessing import image_to_tensor, preprocess_pil_image
 logger = logging.getLogger("freebuff_v4.inference")
 
 #: Indices of every class that represents an actual tumour (i.e. != notumor).
+#
+#: The canonical label is "No_Tumor", so `name.lower()` yields "no_tumor" —
+#: which never equalled the bare "notumor" this compared against. The filter
+#: therefore excluded nothing and this tuple contained ALL four classes, which
+#: silently broke both consumers: the aggregate tumour probability summed to
+#: 1.0 on every scan (so the >= 30% sensitivity alert fired every time), and
+#: the "surface the most likely tumour class" override selected No_Tumor
+#: itself, making it a no-op. Strip separators before comparing.
 TUMOR_CLASS_INDICES: Tuple[int, ...] = tuple(
-    idx for idx, name in enumerate(CLASSES) if name.lower() != "notumor"
+    idx for idx, name in enumerate(CLASSES)
+    if name.lower().replace("_", "").replace("-", "").replace(" ", "") != "notumor"
 )
 
 #: Aggregate tumour-probability threshold for the sensitivity-first alert.
@@ -180,10 +190,18 @@ def build_tta_transforms(
     """Assemble the deterministic TTA view set.
 
     With `full=True` the cartesian product of flips x rotations x scales is
-    generated (48 views with the default config); `max_views` downsamples the
-    list deterministically (evenly spaced) to bound GPU cost on 4 GB cards.
+    generated (2 views with the default config: identity + horizontal mirror);
+    `max_views` downsamples the list deterministically (evenly spaced) to bound
+    GPU cost on small cards.
+
+    The defaults deliberately exclude rotations, scale jitter and vertical
+    flips: see the TTA block in config.py for the measurement showing that
+    those views are out of distribution for an axial brain MRI and cost
+    accuracy rather than reducing variance.
     """
-    flips = flips if flips is not None else ["none", "horizontal", "vertical", "both"]
+    # Read the policy from config (it was previously hardcoded here, which
+    # silently made config.TTA_FLIPS dead settings).
+    flips = flips if flips is not None else TTA_FLIPS
     rotations_deg = rotations_deg if rotations_deg is not None else TTA_ROTATIONS_DEG
     scales = scales if scales is not None else TTA_SCALE_FACTORS
 
@@ -859,7 +877,29 @@ class FreeBuffInference:
             logger.info("HOG-PCA transformer loaded from %s", pca_path)
             break
 
+        # Optional confidence calibration written by calibrate.py. Temperature
+        # scaling cannot change which class wins — only how confident the
+        # reported probability is — so loading it never alters accuracy, but it
+        # does feed the reliability bands and the low-confidence safeguard.
+        softmax_temp = TTA_SOFTMAX_TEMP
+        calib_path = models_dir / "calibration.json"
+        if calib_path.exists():
+            try:
+                import json
+                payload = json.loads(calib_path.read_text(encoding="utf-8"))
+                fitted = float(payload["temperature"])
+                if fitted > 0:
+                    softmax_temp = fitted
+                    logger.info(
+                        "Confidence calibration loaded from %s (T=%.4f, fitted on %s).",
+                        calib_path, fitted, payload.get("fitted_on", "?"),
+                    )
+            except Exception as exc:
+                logger.warning("Calibration file %s unusable (%s); using T=%.2f.",
+                               calib_path, exc, softmax_temp)
+
         return cls(model=model, device=device, pca=pca,
+                   softmax_temp=softmax_temp,
                    checkpoint_path=self_resolved)
 
     # --------------------------------------------------------- preprocessing
@@ -986,7 +1026,13 @@ class FreeBuffInference:
         std = torch.tensor(NORMALIZE_STD).view(1, 3, 1, 1)
         tensor = ((tensor - mean) / std).to(self.device)
 
+        # The HOG tensor is built from numpy on the CPU, so it must be moved to
+        # the engine's device before it reaches the model. The TTA path moved it
+        # internally and the non-TTA path did not, which made every
+        # use_tta=False call fail on a CUDA device with a cuda/cpu mismatch.
         hog_tensor = self._hog_for(composite)
+        if hog_tensor is not None:
+            hog_tensor = hog_tensor.to(self.device)
 
         if use_tta:
             predictor = TTAPredictor(
@@ -1046,6 +1092,149 @@ class FreeBuffInference:
             "potential_tumor": bool(pred.get("potential_tumor", False)),
             "reasoning_text": reasoning,
         }
+
+    # ------------------------------------------------------- volumetric path
+    def predict_volume(
+        self,
+        volume_path: Union[str, Path],
+        use_tta: bool = True,
+        patient_id: Optional[str] = None,
+        max_slices: int = 32,
+        min_foreground: float = 0.02,
+        aggregation: str = "mean",
+    ) -> Dict[str, Any]:
+        """Classify a whole 3D volume instead of one slice.
+
+        The 2D entry points take a single slice, and for a NIfTI volume that
+        meant the middle slice only — the rest of the study was discarded. Here
+        every informative slice is classified and the per-slice probability
+        distributions are aggregated, which is the volumetric context a real
+        study carries.
+
+        Args:
+            volume_path: NIfTI (.nii/.nii.gz) or any 3D array the loader reads.
+            max_slices: cap on slices scored, sampled evenly through the volume
+                so cost stays bounded on a long study.
+            min_foreground: slices whose non-background fraction falls below
+                this are skipped — the first and last slices of a head study
+                are mostly air and only add noise.
+            aggregation: "mean" averages the per-slice probabilities (stable,
+                the default); "max_tumor" instead selects the slice with the
+                highest aggregate tumour probability, which is the
+                sensitivity-first choice when a small lesion appears on only a
+                few slices.
+
+        Returns:
+            The same payload as `predict_uploads`, plus `n_slices_scored`,
+            `slice_predictions` and `aggregation`, so the per-slice evidence
+            behind the volume-level answer stays inspectable.
+        """
+        from dataset import load_nifti_volume
+
+        volume_path = Path(volume_path)
+        volume = np.asarray(load_nifti_volume(volume_path), dtype=np.float32)
+        if volume.ndim == 2:                      # a 2D file: fall back cleanly
+            volume = volume[None, ...]
+        if volume.ndim != 3:
+            raise ValueError(f"Expected a 3D volume, got shape {volume.shape}")
+
+        # load_nifti_volume returns (D, H, W) after canonical reorientation.
+        depth = volume.shape[0]
+        candidates = []
+        for i in range(depth):
+            sl = volume[i]
+            rng = float(sl.max() - sl.min())
+            if rng <= 0:
+                continue
+            norm = (sl - sl.min()) / rng
+            if float((norm > 0.1).mean()) >= min_foreground:
+                candidates.append(i)
+        if not candidates:                        # nothing passed the filter
+            candidates = [depth // 2]
+        if len(candidates) > max_slices:          # even sample through the study
+            idx = np.linspace(0, len(candidates) - 1, max_slices).astype(int)
+            candidates = [candidates[i] for i in dict.fromkeys(idx.tolist())]
+
+        logger.info("Volume %s: scoring %d of %d slices.",
+                    volume_path.name, len(candidates), depth)
+
+        per_slice: List[Dict[str, Any]] = []
+        prob_rows: List[np.ndarray] = []
+        for i in candidates:
+            sl = volume[i]
+            rng = float(sl.max() - sl.min())
+            norm = (sl - sl.min()) / rng if rng > 0 else sl
+            img = Image.fromarray((np.clip(norm, 0, 1) * 255).astype(np.uint8), mode="L")
+            arr = self.preprocess_path_from_image(img)
+            r = self.predict_uploads({"t1ce": arr, "t2": None, "flair": None},
+                                     use_tta=use_tta)
+            row = np.array([r["probabilities"][c] for c in self.class_names],
+                           dtype=np.float32)
+            prob_rows.append(row)
+            per_slice.append({
+                "slice_index": int(i),
+                "predicted_class": r["predicted_class"],
+                "confidence": float(r["confidence"]),
+                "tumor_probability": float(r.get("tumor_probability", 0.0)),
+            })
+
+        stacked = np.stack(prob_rows)             # (n_slices, n_classes)
+        if aggregation == "max_tumor":
+            no_tumor_i = self.class_names.index("No_Tumor") if "No_Tumor" in self.class_names else 2
+            tumour_mass = 1.0 - stacked[:, no_tumor_i]
+            chosen = int(tumour_mass.argmax())
+            agg = stacked[chosen]
+        else:
+            agg = stacked.mean(axis=0)
+        agg = agg / max(float(agg.sum()), 1e-8)
+
+        probs_t = torch.from_numpy(agg)
+        decision = clinical_decision(probs_t)
+        alert = tumor_safety_alert(probs_t)
+        predicted_name = self.class_names[int(decision["pred_class"])]
+        confidence = float(agg[int(decision["pred_class"])])
+        probabilities = {c: float(p) for c, p in zip(self.class_names, agg)}
+
+        from staging import interpret_prediction
+        staging = interpret_prediction(
+            predicted_class=_staging_key(predicted_name),
+            confidence=confidence,
+            probabilities=probabilities,
+        )
+        reasoning = generate_clinical_reasoning(
+            predicted_name, confidence, probs_t, None, lookup_who_stage(predicted_name))
+
+        return {
+            "predicted_class": predicted_name,
+            "confidence": confidence,
+            "probabilities": probabilities,
+            "staging": staging,
+            "model_version": self.model_version,
+            "modalities": ["volume"],
+            "patient_id": patient_id or volume_path.stem,
+            "date": time.strftime("%Y-%m-%d %H:%M"),
+            "low_confidence": is_low_confidence(confidence),
+            "confidence_band": confidence_band(confidence),
+            "safety_alert": alert.get("safety_alert", ""),
+            "tumor_probability": float(alert.get("tumor_probability", 0.0)),
+            "potential_tumor": bool(alert.get("potential_tumor", False)),
+            "reasoning_text": reasoning,
+            "n_slices_scored": len(candidates),
+            "n_slices_total": int(depth),
+            "aggregation": aggregation,
+            "slice_predictions": per_slice,
+        }
+
+    @staticmethod
+    def preprocess_path_from_image(image: "Image.Image",
+                                   size: Tuple[int, int] = INPUT_SIZE) -> np.ndarray:
+        """In-memory twin of `preprocess_path` for slices already in RAM."""
+        tensor = preprocess_image_for_inference(image, size=size, as_tensor=True)
+        assert isinstance(tensor, Tensor)
+        arr = tensor.detach().cpu().numpy().transpose(1, 2, 0)
+        mean = np.asarray(NORMALIZE_MEAN, dtype=np.float32).reshape(1, 1, 3)
+        std = np.asarray(NORMALIZE_STD, dtype=np.float32).reshape(1, 1, 3)
+        return np.clip(arr * std + mean, 0.0, 1.0).astype(np.float32)
 
     # ------------------------------------------------------------ explainers
     def gradcam_maps(

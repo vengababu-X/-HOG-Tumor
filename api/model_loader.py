@@ -48,7 +48,13 @@ from config import (
     set_all_seeds,
 )
 from model import build_freebuff_v4, load_checkpoint, GradCAMPlusPlus
-from inference import build_tta_transforms
+from inference import (
+    build_tta_transforms,
+    confidence_band,
+    generate_clinical_reasoning,
+    is_low_confidence,
+    lookup_who_stage,
+)
 from preprocessing import preprocess_pil_image, image_to_tensor
 
 logger = logging.getLogger("freebuff_v4.api.model_loader")
@@ -294,15 +300,36 @@ class ModelManager:
             for i in range(NUM_CLASSES)
         ]
 
+        # Clinical decision-support fields. These mirror what the Streamlit
+        # dashboard shows, so an API consumer gets the same safeguards rather
+        # than a bare argmax: the <70% low-confidence flag, the reliability
+        # band, the WHO grade reference and the reasoning narrative.
+        selected_name = CLASSES[selected_class]
+        reported_conf = float(probs_np[selected_class])
+        low_conf = is_low_confidence(reported_conf)
+        band = confidence_band(reported_conf)
+        staging = lookup_who_stage(selected_name)
+        try:
+            reasoning = generate_clinical_reasoning(
+                selected_name, reported_conf, probs_np,
+            )
+        except Exception as exc:  # narrative must never fail a prediction
+            logger.warning("Clinical reasoning generation failed: %s", exc)
+            reasoning = ""
+
         return {
             "success": True,
-            "predicted_class": CLASSES[selected_class],
+            "predicted_class": selected_name,
             "predicted_class_index": selected_class,
             "confidence": round(confidence, 6),
             "probabilities": class_probs,
             "tumor_probability": round(tumor_prob, 6),
             "potential_tumor": potential_tumor,
             "safety_alert": safety_alert,
+            "low_confidence": low_conf,
+            "confidence_band": band,
+            "staging": staging,
+            "reasoning_text": reasoning,
             "gradcam_heatmap_base64": gradcam_b64,
             "tta_used": use_tta,
             "num_tta_transforms": num_transforms,

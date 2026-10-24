@@ -25,7 +25,10 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:  # torch is imported lazily so `run.py --help` stays fast,
+    import torch   # but the annotation on _get_device still needs the name.
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,7 +41,23 @@ logger = logging.getLogger("freebuff_v4.run")
 # ==============================================================================
 # DEVICE HELPER
 # ==============================================================================
-def _get_device(device_str: Optional[str] = None) -> torch.device:
+def _resolve_data_dir(given: Optional[str], split: str) -> Path:
+    """Resolve a class-folder directory for `split` ("Training" / "Testing").
+
+    `DATA_DIR` points at `data/`, which holds `Training/` and `Testing/`
+    subfolders rather than class folders — so defaulting straight to it made
+    `run.py train` and `run.py evaluate` fail with "No supported labeled
+    images found". Fall through to the split subfolder when it exists.
+    """
+    from config import DATA_DIR
+
+    if given:
+        return Path(given)
+    candidate = Path(DATA_DIR) / split
+    return candidate if candidate.is_dir() else Path(DATA_DIR)
+
+
+def _get_device(device_str: Optional[str] = None) -> "torch.device":
     """Resolve the best available torch device."""
     import torch
     if device_str:
@@ -75,7 +94,7 @@ def cmd_train(args: argparse.Namespace) -> None:
     logger.info("Loading training data from: %s", args.data_dir)
 
     # --- Data ---
-    data_dir = Path(args.data_dir) if args.data_dir else DATA_DIR
+    data_dir = _resolve_data_dir(args.data_dir, "Training")
     if not data_dir.exists():
         logger.error("Data directory not found: %s", data_dir)
         logger.info("Expected class subfolders: %s", "/".join(CLASSES))
@@ -184,13 +203,14 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     """Run full evaluation and generate all visualizations + PDF report."""
     from config import (
         CLASSES, NUM_CLASSES, DATA_DIR, EVAL_VIS_DIR,
+        DEFAULT_MODEL_SAVE_PATH,
         initialize_directories,
     )
     from evaluate import run_evaluation, print_evaluation_summary
 
     device = _get_device(args.device)
     ckpt_path = Path(args.checkpoint) if args.checkpoint else DEFAULT_MODEL_SAVE_PATH
-    data_dir = Path(args.test_data_dir) if args.test_data_dir else DATA_DIR
+    data_dir = _resolve_data_dir(args.test_data_dir, "Testing")
 
     if not ckpt_path.exists():
         logger.error("Checkpoint not found: %s", ckpt_path)
@@ -203,13 +223,24 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     logger.info("  TTA        : %s", not args.no_tta)
     logger.info("  Device     : %s", device)
 
+    # Resolve the HOG branch: on unless --no_hog, and only when the PCA
+    # artifact is actually present.
+    from config import SAVED_MODELS_DIR
+    pca_path = Path(args.pca_path) if args.pca_path else SAVED_MODELS_DIR / "freebuff_pca.pkl"
+    use_hog = (not args.no_hog) and pca_path.exists()
+    if not use_hog:
+        logger.warning("HOG branch disabled (no_hog=%s, pca exists=%s) - "
+                       "scores will differ from the documented run.",
+                       args.no_hog, pca_path.exists())
+        pca_path = None
+
     results = run_evaluation(
         checkpoint_path=str(ckpt_path),
         test_data_dir=str(data_dir) if data_dir.exists() else None,
         batch_size=args.batch_size,
         use_tta=not args.no_tta,
-        use_hog=args.use_hog,
-        pca_path=args.pca_path,
+        use_hog=use_hog,
+        pca_path=str(pca_path) if pca_path else None,
         device_str=str(device),
         output_dir=EVAL_VIS_DIR,
     )
@@ -249,6 +280,48 @@ def cmd_infer(args: argparse.Namespace) -> None:
     # Load model
     model = build_freebuff_v4(num_classes=NUM_CLASSES, device=device, pretrained=False)
     load_checkpoint(ckpt_path, model, device=device, strict=False)
+
+    # A NIfTI file is a whole study, not a slice. Route it to the volumetric
+    # path so every informative slice contributes, instead of silently
+    # classifying the middle slice and discarding the rest of the scan.
+    is_volume = (image_path.suffix.lower() in (".nii", ".nifti")
+                 or image_path.name.lower().endswith(".nii.gz"))
+    if is_volume and not getattr(args, "middle_slice_only", False):
+        from inference import FreeBuffInference
+
+        logger.info("Volume detected — scoring all informative slices: %s", image_path)
+        engine = FreeBuffInference.from_dir(Path(ckpt_path).parent)
+        t0 = time.time()
+        vol = engine.predict_volume(
+            image_path,
+            use_tta=not args.no_tta,
+            patient_id=getattr(args, "patient_id", None),
+            aggregation=getattr(args, "volume_aggregation", "mean"),
+        )
+        elapsed = time.time() - t0
+        print("\n" + "=" * 60)
+        print(f"  Volume       : {image_path.name}")
+        print(f"  Slices scored: {vol['n_slices_scored']} / {vol['n_slices_total']}")
+        print(f"  Aggregation  : {vol['aggregation']}")
+        print(f"  Prediction   : {vol['predicted_class']}")
+        print(f"  Confidence   : {vol['confidence']:.2%} ({vol['confidence_band']})")
+        print(f"  Tumour prob. : {vol['tumor_probability']:.2%}")
+        if vol.get("low_confidence"):
+            print("  [!] LOW CONFIDENCE — provisional, secondary review required.")
+        if vol.get("safety_alert"):
+            print(f"  [!] {vol['safety_alert']}")
+        print("\n  Per-class probabilities:")
+        for cls, p in vol["probabilities"].items():
+            print(f"    {cls:<13} {p:.4f}  {'#' * int(p * 30)}")
+        print("\n  Per-slice predictions:")
+        for sl in vol["slice_predictions"]:
+            print(f"    slice {sl['slice_index']:>3}: {sl['predicted_class']:<11} "
+                  f"{sl['confidence']:.3f}")
+        print(f"\n  Time         : {elapsed:.2f}s")
+        print("=" * 60)
+        print("  FOR RESEARCH USE ONLY. NOT FOR CLINICAL DIAGNOSTIC USE.")
+        print("=" * 60 + "\n")
+        return
 
     # Run inference
     logger.info("Running inference on: %s", image_path)
@@ -445,11 +518,11 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="""
 Examples:
   python run.py demo                          Quick smoke test (no data)
-  python run.py train --data_dir data/        Train the model
+  python run.py train --data_dir data/Training   Train the model
   python run.py evaluate --checkpoint saved_models/freebuff_v4.pt
-  python run.py infer saved_models/freebuff_v4.pt path/to/scan.png
+  python run.py infer path/to/scan.png --checkpoint saved_models/freebuff_v4.pt
   python run.py dashboard                     Launch Streamlit UI
-  python run.py all --data_dir data/          Full pipeline
+  python run.py all --data_dir data/Training    Full pipeline
         """,
     )
     sub = parser.add_subparsers(dest="command", help="Command to run")
@@ -471,13 +544,28 @@ Examples:
     p_eval.add_argument("--test_data_dir", type=str, default=None, help="Test data directory")
     p_eval.add_argument("--batch_size", type=int, default=_DEFAULT_BATCH_SIZE)
     p_eval.add_argument("--no_tta", action="store_true", help="Disable TTA")
-    p_eval.add_argument("--use_hog", action="store_true", help="Enable HOG branch")
-    p_eval.add_argument("--pca_path", type=str, default=None)
+    # The shipped model HAS a HOG branch, and its PCA artifact sits in
+    # saved_models/. Defaulting HOG off made this command silently evaluate
+    # the deep branch alone and disagree with the documented evaluate.py run.
+    p_eval.add_argument("--no_hog", action="store_true",
+                        help="Disable the HOG branch (on by default when a PCA artifact exists).")
+    p_eval.add_argument("--use_hog", action="store_true",
+                        help="Deprecated: HOG is on by default; kept so old commands still run.")
+    p_eval.add_argument("--pca_path", type=str, default=None,
+                        help="PCA artifact; defaults to saved_models/freebuff_pca.pkl.")
     p_eval.add_argument("--device", type=str, default=None)
 
     # --- infer ---
     p_infer = sub.add_parser("infer", help="Classify a single MRI scan")
-    p_infer.add_argument("image", type=str, help="Path to MRI image")
+    p_infer.add_argument("image", type=str,
+                         help="Path to an MRI slice, or a NIfTI volume (.nii/.nii.gz) "
+                              "which is scored slice-by-slice and aggregated.")
+    p_infer.add_argument("--volume_aggregation", choices=["mean", "max_tumor"], default="mean",
+                         help="How to combine per-slice predictions for a volume. "
+                              "'mean' is stable; 'max_tumor' is sensitivity-first for a "
+                              "lesion visible on only a few slices.")
+    p_infer.add_argument("--middle_slice_only", action="store_true",
+                         help="Treat a NIfTI volume as a single middle slice (legacy behaviour).")
     p_infer.add_argument("--checkpoint", type=str, default=None)
     p_infer.add_argument("--no_tta", action="store_true")
     p_infer.add_argument("--use_hog", action="store_true")

@@ -4,4 +4,14 @@ __pycache__/
 *.pyc
 saved_models/
 checkpoints/
+*.pt
+*.pth
+*.keras
+*.pkl
 *.log
+
+# Derived dataset written by deduplicate_dataset.py — reproducible from data/
+data_clean/
+
+# Confidence calibration fitted per deployment site (calibrate.py --apply)
+saved_models/calibration.json

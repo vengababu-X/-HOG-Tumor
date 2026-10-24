@@ -264,7 +264,11 @@ def build_confidence_bar_chart(
     """
     confidences = np.asarray(confidences, dtype=float).ravel()
     fig, ax = plt.subplots(figsize=figsize)
-    colors = plt.cm.get_cmap(cmap_name)(np.linspace(0.3, 0.9, len(class_names)))
+    try:  # matplotlib >= 3.9 removed cm.get_cmap
+        cmap = matplotlib.colormaps[cmap_name]
+    except (AttributeError, KeyError):
+        cmap = plt.get_cmap(cmap_name)
+    colors = cmap(np.linspace(0.3, 0.9, len(class_names)))
     x = np.arange(len(class_names))
     bars = ax.bar(x, confidences, color=colors, edgecolor="black", linewidth=0.8)
     ax.set_xticks(x)
@@ -395,7 +399,7 @@ class PDFReportGenerator:
         exam_date: Optional[str] = None,
         modality: str = "MRI Brain",
         scan_description: str = "Brain MRI — T1 / T2 / FLAIR (classification slice)",
-        created_by: str = "FreeBuff v4 Research System",
+        created_by: str = "NeuroScan CDS Workstation",
     ) -> None:
         """
         Add a cover page with hospital-style header, patient info block, and
@@ -411,7 +415,7 @@ class PDFReportGenerator:
         """
         self.elements = []
         self._add_horizontal_rule()
-        self.elements.append(Paragraph("FreeBuff v4", self.styles["title"]))
+        self.elements.append(Paragraph("NeuroScan CDS", self.styles["title"]))
         self.elements.append(Paragraph(
             "Multi-Modal Brain Tumor Classification & Clinical Decision Support",
             self.styles["subtitle"]))
@@ -617,11 +621,23 @@ class PDFReportGenerator:
                 malignancy, growth_pattern, recommended_intervention_protocol.
             class_name: Tumour class name for context.
         """
-        self.elements.append(Paragraph("WHO GRADE & STAGING ASSESSMENT", self.styles["heading1"]))
+        # "ASSESSMENT" implied the system graded this patient. It does not: the
+        # model classifies tumour type, and the block below is a reference
+        # lookup keyed on that type. The heading and the note make that explicit
+        # so a reader cannot mistake it for a patient-specific grade.
+        self.elements.append(Paragraph(
+            "WHO GRADE REFERENCE FOR THE PREDICTED TUMOUR TYPE", self.styles["heading1"]))
         self._add_horizontal_rule()
         self.elements.append(Paragraph(
             f"Tumour Class: <b>{class_name}</b>", self.styles["body"]))
         self._add_spacer(4)
+        self.elements.append(Paragraph(
+            "<b>NOTE:</b> The following is reference information for the predicted "
+            "tumour <i>type</i>. It is NOT a grade predicted for this patient. This "
+            "system classifies tumour type only; WHO grading requires histopathology "
+            "and molecular testing by a qualified neuropathologist.",
+            self.styles["body"]))
+        self._add_spacer(6)
 
         staging_fields = [
             ("Grade Label", stage_info.get("grade_label", "N/A")),
@@ -678,7 +694,7 @@ class PDFReportGenerator:
         filename: Optional[str] = None,
         patient_id: Optional[str] = None,
         page_size: Tuple[float, float] = A4,
-        author: str = "FreeBuff v4",
+        author: str = "NeuroScan CDS",
         title: str = "Brain Tumor Classification Report",
         subject: str = "Diagnostic Imaging Classification",
     ) -> Path:
@@ -704,7 +720,7 @@ class PDFReportGenerator:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             pid = (patient_id or "unknown")[:20].replace(" ", "_")
             safe_pid = "".join(c if c.isalnum() else "_" for c in pid)
-            filename = f"FreeBuff_v4_Report_{safe_pid}_{ts}.pdf"
+            filename = f"NeuroScan_CDS_Report_{safe_pid}_{ts}.pdf"
 
         out_path = self.report_dir / filename
         if out_path.suffix != ".pdf":
@@ -803,7 +819,7 @@ def generate_pdf_report(
         exam_date=exam_date,
         modality="MRI Brain",
         scan_description=f"Brain MRI slice — classification target: {pred}",
-        created_by="FreeBuff v4 Research System",
+        created_by="NeuroScan CDS Workstation",
     )
     generator.add_prediction_summary(
         prediction=pred,

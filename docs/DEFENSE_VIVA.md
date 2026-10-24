@@ -126,7 +126,7 @@ a fallback mode but cosine was the selected default.
 Automatic Mixed Precision runs eligible ops in fp16 (tensor cores) while
 keeping sensitive accumulations in fp32. On the RTX 3050 it roughly halves
 activation memory and gives ~1.6–2× throughput, which is what makes batch 32
-plus 48-view TTA practical. GradScaler handles fp16's small dynamic range:
+practical during training. GradScaler handles fp16's small dynamic range:
 it scales the loss up, checks gradients for inf/NaN, skips poisoned steps,
 and rescales dynamically. BatchNorm statistics stay fp32 automatically.
 
@@ -174,12 +174,35 @@ use only deterministic resize+normalise.
 
 ## Group C — Inference & Explainability
 
-**C1. What is TTA and why does it help?**
-Test-Time Augmentation runs the model on 48 deterministic augmented views
-(4 flips × 4 rotations × 3 scales) and averages the predictions. Averaging
-over input neighbourhoods reduces variance near decision boundaries —
-effectively an ensemble — at the cost of 48 forward passes, which is
-~0.5 s on the RTX 3050.
+**C1. What is TTA, and why does your policy use only 2 views?**
+Test-Time Augmentation runs the model on several deterministic views of the
+same input and averages the predictions, reducing variance near decision
+boundaries — effectively a cheap ensemble.
+
+The important caveat is that a TTA view is only useful if it stays inside the
+distribution the model was trained on. An earlier policy here used 4 flips ×
+4 rotations × 3 scales = 48 views, including vertical flips and 90/180/270°
+rotations. Those are anatomically invalid for an axial brain MRI: no scanner
+emits an upside-down brain, so the model's opinion of those views is noise
+being averaged into the answer.
+
+Measuring it on the full 1600-image held-out set (policy selected on a
+held-out split of `data/Training`, then confirmed once on `data/Testing`):
+
+| policy | views | test acc | test macro F1 |
+|---|---|---|---|
+| previous default | 8 | 0.8894 | 0.8888 |
+| previous full grid | 48 | 0.8869 | 0.8859 |
+| no TTA | 1 | 0.9513 | 0.9508 |
+| hflip only (current) | 2 | **0.9556** | **0.9552** |
+
+The 48-view grid was *worse than no TTA at all*. The shipped policy is
+identity + horizontal mirror, which is the one transform justified by the
+anatomy — a brain is roughly bilaterally symmetric. That change alone is
+worth **6.6 accuracy points**, and it costs 2 forward passes rather than 48.
+
+The general lesson: TTA is not free variance reduction, it is an assumption
+that the augmentation preserves the label *and* the input distribution.
 
 **C2. Why average probabilities rather than logits or majority vote?**
 Probability averaging is scale-aware and robust: logits can swing widely and
@@ -321,6 +344,54 @@ time with hooks removed in finally. Everything degrades by flag, not by crash.
 ---
 
 ## Group E — Evaluation & Results
+
+**E0. What does your system actually achieve?**
+**0.9453 accuracy, 0.9431 macro F1**, on the 1,189 held-out images we verified
+are absent from the training set.
+
+Quote that number, not the 0.9550 the full test set gives — and say why
+unprompted, because it is the strongest thing in the project:
+
+| Evaluation set | Images | Accuracy | Macro F1 |
+|---|---|---|---|
+| **Uncontaminated** | **1,189** | **0.9453** | **0.9431** |
+| Full `data/Testing` | 1,600 | 0.9550 | 0.9547 |
+
+We audited our own benchmark and found **25.7% of `data/Testing` is a duplicate
+or near-duplicate of something in `data/Training`** — including **301 of the
+400 No_Tumor images (75%)**. Scoring on those rewards memorisation, so they are
+excluded from the headline.
+
+Per class on the uncontaminated set:
+
+| Class | Precision | Recall | F1 | n |
+|---|---|---|---|---|
+| Glioma | 0.9942 | 0.8779 | 0.9324 | 393 |
+| Meningioma | 0.8773 | 0.9630 | 0.9181 | 297 |
+| No_Tumor | 0.8919 | **1.0000** | 0.9429 | 99 |
+| Pituitary | 0.9728 | 0.9850 | 0.9789 | 400 |
+
+Points worth making unprompted:
+
+1. **No_Tumor recall is still 1.0000** after removing the contamination — no
+   healthy scan was called a tumour. That is the direction you want errors
+   *not* to go, and it survives the audit.
+2. The residual error is **Glioma → Meningioma**, the clinically plausible
+   confusion, not a random failure.
+3. Our earlier reported **0.9828 No_Tumor F1 was the most inflated figure**:
+   only 99 of its 400 test images were ever a real test.
+
+**"So is your model worse than you thought?"** No — the *measurement* was
+optimistic, the model is unchanged. We retrained from scratch on a
+de-duplicated dataset and scored both models on the 1,189 images neither was
+trained on: 0.9453 vs 0.9445 accuracy. Statistically equivalent. The baseline's
+apparent lead on the full test set was memorisation, not capability.
+
+Reproduce both figures with one command:
+
+```bash
+python audit_leakage.py --evaluate
+```
 
 **E1. Summarise your evaluation methodology.**
 Stratified 60/20/20 split, model selection on validation weighted F1, and

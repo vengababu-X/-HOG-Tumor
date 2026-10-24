@@ -39,6 +39,7 @@ from torchvision.transforms.functional import InterpolationMode
 from config import (
     CLASSES,
     NUM_CLASSES,
+    EVALUATION_DIR,
     EVAL_VIS_DIR,
     GRADCAM_EXPORT_DIR,
     PDF_REPORT_DIR,
@@ -606,6 +607,17 @@ def evaluate_model(
     # The new GradCAMPlusPlus.generate_heatmap() uses torch.autograd.grad()
     # which requires the autograd engine to be active.
     if save_gradcam_for_misclassifications and gradcam_engine is not None:
+        # Keep the overlays with the rest of this run's artifacts. Writing them
+        # to the global GRADCAM_EXPORT_DIR regardless of output_dir meant a test
+        # run against a random-weights model overwrote genuine overlays in
+        # evaluation_results/, so results and test output became
+        # indistinguishable on disk.
+        if output_dir == EVAL_VIS_DIR:
+            gradcam_dir = GRADCAM_EXPORT_DIR          # production layout
+        else:
+            gradcam_dir = Path(output_dir) / "gradcam_overlays"
+        gradcam_dir.mkdir(parents=True, exist_ok=True)
+
         for sample_info in misclassified_samples:
             try:
                 img_for_cam = sample_info["image"].to(device)
@@ -628,7 +640,7 @@ def evaluate_model(
                 overlay_np = overlay_np.transpose(1, 2, 0)
                 from PIL import Image as PILImage
                 overlay_img = PILImage.fromarray(overlay_np, mode="RGB")
-                save_path = GRADCAM_EXPORT_DIR / f"misclass_{true_cls}_true_{class_names[true_cls]}_pred_{class_names[pred_cls]}_{os.path.basename(img_path)}"
+                save_path = gradcam_dir / f"misclass_{true_cls}_true_{class_names[true_cls]}_pred_{class_names[pred_cls]}_{os.path.basename(img_path)}"
                 overlay_img.save(str(save_path))
                 logger.info("Saved Grad-CAM overlay for misclassified sample: %s", save_path)
             except Exception as e:
@@ -783,9 +795,35 @@ def run_evaluation(
     if use_hog and pca_path is not None:
         pca_path = Path(pca_path)
         if pca_path.exists():
-            with open(pca_path, "rb") as f:
-                pca_model = pickle.load(f)
+            # The PCA artifacts are written with joblib (a small pickle frame
+            # followed by raw numpy blocks), so a plain pickle.load fails with
+            # "invalid load key". Prefer joblib and keep pickle as a fallback
+            # for any artifact that really was written with pickle.
+            try:
+                import joblib
+                pca_model = joblib.load(pca_path)
+            except Exception:
+                with open(pca_path, "rb") as f:
+                    pca_model = pickle.load(f)
             logger.info("Loaded PCA model from %s", pca_path)
+
+            # Guard against a legacy artifact whose input width does not match
+            # the live HOG extractor (e.g. the v3 6144-d `pca.pkl` vs the v4
+            # 2048-d `freebuff_pca.pkl`). Mirrors FreeBuffInference.from_dir:
+            # drop to the deep branch rather than crashing mid-evaluation.
+            try:
+                from config import INPUT_SIZE
+                probe_dim = int(HOGExtractor().extract(
+                    np.zeros(INPUT_SIZE, dtype=np.float32)).shape[0])
+                expected_in = getattr(pca_model, "n_features_in_", None)
+                if expected_in is not None and int(expected_in) != probe_dim:
+                    logger.warning(
+                        "PCA artifact %s expects %d features but the current HOG "
+                        "extractor produces %d - incompatible. Evaluating on the "
+                        "deep branch only.", pca_path, int(expected_in), probe_dim)
+                    pca_model = None
+            except Exception as exc:  # probing must never break evaluation
+                logger.debug("HOG dimension probe skipped: %s", exc)
         else:
             logger.warning("PCA path not found: %s; continuing without HOG features.", pca_path)
 
@@ -837,6 +875,59 @@ def run_evaluation(
         results["accuracy"], results["macro_f1"], results["weighted_f1"],
         results["n_misclassified"], results["n_test_samples"],
     )
+
+    # Persist the held-out report next to the other artifacts. Nothing used to
+    # write this file, so the committed copy silently went on describing an
+    # older model; regenerating it on every run keeps it honest.
+    try:
+        from config import TTA_FLIPS, TTA_ROTATIONS_DEG, TTA_SCALE_FACTORS
+        from datetime import datetime, timezone
+
+        report_path = EVALUATION_DIR / "holdout_report.txt"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        n_views = 1 if not use_tta else len(build_tta_transforms())
+        with open(report_path, "w", encoding="utf-8") as fh:
+            fh.write("FreeBuff v4 - held-out evaluation\n")
+            fh.write("=" * 62 + "\n")
+            fh.write(f"generated   : {datetime.now(timezone.utc):%Y-%m-%d %H:%M:%S} UTC\n")
+            fh.write(f"generated by: evaluate.py\n")
+            fh.write(f"checkpoint  : {checkpoint_path}\n")
+            fh.write(f"test data   : {test_data_dir}\n")
+            fh.write(f"samples     : {results['n_test_samples']}\n")
+            fh.write(f"device      : {device}\n")
+            fh.write(f"HOG branch  : {'on' if use_hog and pca_model is not None else 'off'}\n")
+            fh.write(f"TTA         : {'on' if use_tta else 'off'} ({n_views} view(s); "
+                     f"flips={TTA_FLIPS}, rot={TTA_ROTATIONS_DEG}, scale={TTA_SCALE_FACTORS})\n")
+            fh.write("=" * 62 + "\n\n")
+            # These figures cover the FULL test folder. 25.7% of data/Testing is
+            # a duplicate or near-duplicate of data/Training, so scoring on it
+            # rewards memorisation. Point the reader at the corrected figure
+            # rather than letting this file be quoted on its own.
+            fh.write("NOTE: this scores the FULL test folder. 25.7% of data/Testing is a\n")
+            fh.write("duplicate or near-duplicate of data/Training, so these figures are\n")
+            fh.write("optimistic. For the generalisation estimate on the 1,189 verified\n")
+            fh.write("uncontaminated images, run:  python audit_leakage.py --evaluate\n\n")
+            fh.write(f"accuracy    : {results['accuracy']:.4f}\n")
+            fh.write(f"macro F1    : {results['macro_f1']:.4f}\n")
+            fh.write(f"weighted F1 : {results['weighted_f1']:.4f}\n")
+            fh.write(f"misclassified: {results['n_misclassified']} / {results['n_test_samples']}\n\n")
+            fh.write(results.get("classification_report_str", "") + "\n")
+            roc = results.get("roc_aucs") or {}
+            if roc:
+                fh.write("ROC AUC (one-vs-rest)\n")
+                for k, v in roc.items():
+                    fh.write(f"  {k:<12}: {v:.4f}\n")
+                fh.write("\n")
+            cm = results.get("confusion_matrix_counts")
+            if cm is not None:
+                fh.write("Confusion matrix (rows = true, cols = predicted)\n")
+                fh.write(f"{'':<12}" + "".join(f"{c:>12}" for c in class_names) + "\n")
+                for i, row in enumerate(np.asarray(cm)):
+                    fh.write(f"{class_names[i]:<12}" + "".join(f"{int(v):>12}" for v in row) + "\n")
+        logger.info("Held-out report written to %s", report_path)
+    except Exception as exc:  # reporting must never fail a finished evaluation
+        logger.warning("Could not write holdout report: %s", exc)
+
     return results
 
 

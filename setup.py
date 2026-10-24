@@ -34,7 +34,7 @@ import platform
 import shutil
 import subprocess
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Dependency manifest (Python ≥3.9, ≤3.12 recommended for TensorFlow)

@@ -37,6 +37,23 @@ class ClassProbability(BaseModel):
     )
 
 
+class WHOStaging(BaseModel):
+    """WHO CNS grade reference for a predicted class.
+
+    Mirrors the record returned by inference.lookup_who_stage. This is a
+    reference lookup keyed on the predicted class, not a grade predicted by
+    the model - the model classifies tumour type, it does not grade tumours.
+    """
+
+    grade_label: str = Field("", description="e.g. 'WHO Grade I (Pilocytic Astrocytoma)'")
+    typical_imaging_features: str = Field("", description="Typical imaging presentation")
+    malignancy: str = Field("", description="Malignancy profile")
+    growth_pattern: str = Field("", description="Typical growth pattern")
+    recommended_intervention_protocol: str = Field(
+        "", description="Reference intervention protocol (not patient advice)"
+    )
+
+
 class PredictionResponse(BaseModel):
     """Response model for POST /predict."""
 
@@ -66,6 +83,26 @@ class PredictionResponse(BaseModel):
     safety_alert: str = Field(
         "",
         description="Non-empty if a safety alert was triggered",
+    )
+    low_confidence: bool = Field(
+        False,
+        description=(
+            "True when confidence falls below the low-confidence threshold. "
+            "The result must then be treated as provisional and referred for "
+            "secondary review."
+        ),
+    )
+    confidence_band: str = Field(
+        "",
+        description="Reliability band: High / Moderate / Low / Very Low",
+    )
+    staging: Optional[WHOStaging] = Field(
+        None,
+        description="WHO CNS grade reference for the predicted class",
+    )
+    reasoning_text: str = Field(
+        "",
+        description="Human-readable clinical reasoning for the prediction",
     )
     gradcam_heatmap_base64: str = Field(
         "",

@@ -440,7 +440,10 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     logger.info("Preprocessing uploads: %s", provided)
     uploads = preprocess_files(paths)
-    if not any(uploads.values()):
+    # The values are numpy arrays, and bool() of a multi-element array raises
+    # ValueError, so any() over them cannot be used. Test for presence instead:
+    # a modality is "supplied" when its entry is not None.
+    if all(v is None for v in uploads.values()):
         sys.exit("[error] No uploads could be preprocessed.")
 
     pred_class, confidence, probabilities, model_version = run_prediction(

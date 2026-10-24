@@ -115,8 +115,13 @@ _UNKNOWN_PROFILE: Dict[str, object] = {
 def _profile_for(class_name: str) -> Dict[str, object]:
     if class_name in TUMOUR_PROFILES:
         return TUMOUR_PROFILES[class_name]
-    if class_name == "notumor":
-        return TUMOUR_PROFILES["notumor"]
+    # The profile keys are lowercase and unpunctuated ("notumor"), but the
+    # canonical labels in config.CLASSES are "Glioma", "No_Tumor", ... . Without
+    # normalising here, any caller passing a CLASSES name silently received the
+    # empty "unknown" profile instead of real staging information.
+    normalised = class_name.strip().lower().replace("_", "").replace("-", "").replace(" ", "")
+    if normalised in TUMOUR_PROFILES:
+        return TUMOUR_PROFILES[normalised]
     logger.warning("No staging profile for class '%s'.", class_name)
     return dict(_UNKNOWN_PROFILE)
 
@@ -175,16 +180,22 @@ def interpret_prediction(
 
 
 def malignancy_band(predicted_class: str) -> str:
-    """Coarse triage band used by the app badge (LOW / HIGH / NONE)."""
-    if predicted_class == "notumor":
+    """Coarse triage band used by the app badge (LOW / HIGH / NONE).
+
+    The comparisons below are against the lowercase, unpunctuated profile keys,
+    but every caller passes a canonical label from config.CLASSES ("Glioma",
+    "No_Tumor", ...). Without normalising first, none of the branches matched
+    and this returned "LOW" for everything — badging a glioma as low-malignancy
+    and a healthy scan as low rather than none. Normalise before comparing.
+    """
+    key = predicted_class.strip().lower().replace("_", "").replace("-", "").replace(" ", "")
+    if key == "notumor":
         return "NONE"
-    profile = TUMOUR_PROFILES.get(predicted_class, _UNKNOWN_PROFILE)
-    band_text = str(profile.get("malignancy", ""))
     # Glioma is the only HIGH-malignancy class in the platform reference set.
     # Meningioma/pituitary carry "LOW" profiles even though their texts mention
-    # high-grade subtypes — we key off the typical_grade rather than the
-    # literal substring so the badge stays clinically sane.
-    if predicted_class == "glioma":
+    # high-grade subtypes — we key off the class rather than the literal
+    # substring so the badge stays clinically sane.
+    if key == "glioma":
         return "HIGH"
     return "LOW"
 

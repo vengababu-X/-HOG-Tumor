@@ -118,7 +118,19 @@ def load_nifti_volume(path: Union[str, Path]) -> np.ndarray:
         import nibabel as nib  # type: ignore[import-untyped]
 
         img = nib.load(str(path))
+        # Reorient to canonical RAS+ so the third axis is the axial direction
+        # regardless of how the file was stored.
+        try:
+            img = nib.as_closest_canonical(img)
+        except Exception as exc:  # non-standard affine: use the file order
+            logger.debug("NIfTI canonical reorientation skipped: %s", exc)
         arr = img.get_fdata().astype(np.float32)
+        # nibabel yields (H, W, D) — spatial dims first, slices last — but this
+        # function's contract (and every caller, which takes volume[D // 2]) is
+        # D-first. Without this transpose the "middle axial slice" was actually
+        # a row taken across the volume, i.e. not an anatomical slice at all.
+        if arr.ndim == 3:
+            arr = np.transpose(arr, (2, 0, 1))
         return arr
     except ImportError:
         raise ImportError(
@@ -535,7 +547,10 @@ class BrainTumorDataset(Dataset):
             arr = normalize_intensity(arr)
             arr = (arr * 255.0).astype(np.uint8)
             return Image.fromarray(arr, mode="L")
-        if ext in (".nii", ".nii.gz", ".nifti"):
+        # Path.suffix of "scan.nii.gz" is ".gz", not ".nii.gz", so the compound
+        # extension has to be matched on the full name — otherwise the most
+        # common NIfTI form fell through to the generic PIL loader.
+        if ext in (".nii", ".nifti") or path.name.lower().endswith(".nii.gz"):
             vol = load_nifti_volume(path)
             slice_2d = _select_middle_slice(vol)
             slice_2d = normalize_intensity(slice_2d)
@@ -860,6 +875,17 @@ def print_dataset_statistics(datasets: Dict[str, Dataset]) -> None:
 # ==============================================================================
 # BULK DATASET CONSTRUCTION FROM FOLDER TREE
 # ==============================================================================
+def _matches_extension(path: Union[str, Path], extensions: Sequence[str]) -> bool:
+    """True when `path` ends with any of `extensions`, compound ones included.
+
+    `Path.suffix` returns only the LAST component, so "scan.nii.gz" yields
+    ".gz" and never matches a ".nii.gz" entry. Comparing against the full
+    lowercase filename handles both simple and compound extensions.
+    """
+    name = Path(path).name.lower()
+    return any(name.endswith(ext.lower()) for ext in extensions)
+
+
 def build_dataset_from_folder(
     data_dir: Union[str, Path],
     label_map: Optional[Dict[str, int]] = None,
@@ -926,7 +952,10 @@ def build_dataset_from_folder(
         for file_path in class_folder.iterdir():
             if not file_path.is_file():
                 continue
-            if extension_whitelist and file_path.suffix.lower() not in extension_whitelist:
+            # Path.suffix of "case.nii.gz" is ".gz", so a plain suffix test
+            # silently dropped every gzipped NIfTI even though ".nii.gz" is in
+            # the whitelist. Match the full name for compound extensions.
+            if extension_whitelist and not _matches_extension(file_path, extension_whitelist):
                 continue
             samples.append({"image_path": str(file_path), "label": label})
 

@@ -571,7 +571,12 @@ def evaluate_comprehensive(
     class_names = class_names or CLASSES
     output_dir = output_dir or EVAL_VIS_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
-    gradcam_dir = GRADCAM_EXPORT_DIR
+    # Keep overlays with the rest of this run's artifacts. Always writing to the
+    # global GRADCAM_EXPORT_DIR meant a test run against a random-weights model
+    # overwrote genuine overlays in evaluation_results/, making real results and
+    # test output indistinguishable on disk.
+    gradcam_dir = (GRADCAM_EXPORT_DIR if output_dir == EVAL_VIS_DIR
+                   else Path(output_dir) / "gradcam_overlays")
     gradcam_dir.mkdir(parents=True, exist_ok=True)
 
     model.eval()

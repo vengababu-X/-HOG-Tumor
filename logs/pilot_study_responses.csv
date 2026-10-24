@@ -1,0 +1,2 @@
+timestamp_utc,audit_id,reader_id,reader_background,predicted_class,model_confidence,reader_agreement,saliency_accuracy_rating,mpr_3d_utility_rating,safeguards_clarity_rating,overall_usability_score,qualitative_feedback
+2026-10-24T19:53:20.915638+00:00,TEST-TRIAL-001,Reader-Pilot-01,Non-Doctor (Engineering / Evaluator),Glioma,0.9650,Agree with Finding,5,5,4,5,Pilot trial verification successful. 3D MPR sliders and preloaded cases worked seamlessly.

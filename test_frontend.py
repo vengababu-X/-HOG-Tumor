@@ -16,6 +16,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import httpx
+import requests
 import numpy as np
 import torch
 from PIL import Image
@@ -105,19 +106,39 @@ try:
     health = check_api_health(api_url)
     if "error" in health:
         print(f"  API not running at {api_url} — starting test server...")
-        # Start server in background
+        # Start server in background.
+        # Ask the OS for a free port rather than hardcoding 8001: a previous
+        # run leaves TIME_WAIT sockets on that port, so back-to-back runs (as
+        # in the consolidated verification) could fail to bind and the whole
+        # API leg would be reported as skipped.
+        import socket
         import subprocess
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
+            _s.bind(("127.0.0.1", 0))
+            free_port = _s.getsockname()[1]
         server_proc = subprocess.Popen(
             [sys.executable, "-m", "uvicorn", "api.main:app",
-             "--host", "127.0.0.1", "--port", "8001"],
+             "--host", "127.0.0.1", "--port", str(free_port)],
             cwd=str(_project_root),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
         import time
-        time.sleep(5)  # Wait for server to start
-        api_url = "http://127.0.0.1:8001"
-        health = check_api_health(api_url)
+        api_url = f"http://127.0.0.1:{free_port}"
+        print(f"  test server on port {free_port}")
+        # Poll for readiness instead of sleeping a fixed interval: loading the
+        # checkpoint takes far longer than 5s on a cold cache or a busy
+        # machine, and a fixed sleep silently skipped the whole API leg.
+        deadline = time.time() + 120
+        health = {"error": "not started"}
+        while time.time() < deadline:
+            if server_proc.poll() is not None:
+                health = {"error": f"server exited early ({server_proc.returncode})"}
+                break
+            health = check_api_health(api_url)
+            if "error" not in health:
+                break
+            time.sleep(2)
         server_started = True
     else:
         server_started = False
@@ -127,6 +148,7 @@ except Exception as e:
     api_url = None
 
 if api_url and "error" not in health:
+    api_tests_ran = True
     # Test health check
     print(f"  Health check: {json.dumps(health, indent=2)}")
     assert health.get("model_loaded", False), "Model should be loaded"
@@ -135,7 +157,7 @@ if api_url and "error" not in health:
     # Test prediction with valid image
     print("\n  Testing /predict with valid image (TTA + GradCAM)...")
     with open(valid_path, "rb") as f:
-        result = call_predict_api(api_url, f.read(), "scan.png", use_tta=True, generate_gradcam=True)
+        result = call_predict_api(f.read(), "scan.png", use_tta=True, generate_gradcam=True, api_url=api_url)
 
     print(f"    predicted_class: {result['predicted_class']}")
     print(f"    confidence: {result['confidence']:.4f}")
@@ -152,7 +174,7 @@ if api_url and "error" not in health:
     # Test prediction without TTA
     print("\n  Testing /predict without TTA...")
     with open(valid_path, "rb") as f:
-        result2 = call_predict_api(api_url, f.read(), "scan.png", use_tta=False, generate_gradcam=False)
+        result2 = call_predict_api(f.read(), "scan.png", use_tta=False, generate_gradcam=False, api_url=api_url)
     assert result2["tta_used"] is False
     assert result2["num_tta_transforms"] == 1
     assert result2["gradcam_heatmap_base64"] == ""
@@ -169,9 +191,9 @@ if api_url and "error" not in health:
     print("\n  Testing error handling...")
     try:
         with open(valid_path, "rb") as f:
-            call_predict_api(api_url, b"corrupt", "bad.png", use_tta=False, generate_gradcam=False)
+            call_predict_api(b"corrupt", "bad.png", use_tta=False, generate_gradcam=False, api_url=api_url)
         print("    Should have raised HTTPStatusError!")
-    except httpx.HTTPStatusError as e:
+    except requests.exceptions.HTTPError as e:
         assert e.response.status_code == 422
         print(f"    Corrupt file correctly rejected (422): PASS")
 
@@ -180,6 +202,7 @@ if api_url and "error" not in health:
         server_proc.wait(timeout=5)
         print("\n  Test server stopped.")
 else:
+    api_tests_ran = False
     print("  Skipping API tests (server not available)")
     print("  To test: start server with 'uvicorn api.main:app --port 8001'")
 
@@ -188,13 +211,21 @@ shutil.rmtree(test_dir, ignore_errors=True)
 shutil.rmtree(tmp_ckpt_dir, ignore_errors=True)
 
 print("\n" + "=" * 60)
-print("ALL FRONTEND TESTS PASSED!")
+print("ALL FRONTEND TESTS PASSED!" if api_tests_ran
+      else "LOCAL TESTS PASSED - API TESTS WERE SKIPPED")
 print("=" * 60)
 print("\nComponents verified:")
 print("  [OK] Helper functions (confidence color/label)")
 print("  [OK] Base64 image encoding/decoding")
-print("  [OK] API health check communication")
-print("  [OK] API prediction with TTA + Grad-CAM")
-print("  [OK] API prediction without TTA")
-print("  [OK] Error handling for corrupt files")
-print("  [OK] Grad-CAM heatmap decoding")
+_api = "[OK]" if api_tests_ran else "[SKIPPED]"
+print(f"  {_api} API health check communication")
+print(f"  {_api} API prediction with TTA + Grad-CAM")
+print(f"  {_api} API prediction without TTA")
+print(f"  {_api} Error handling for corrupt files")
+print(f"  {_api} Grad-CAM heatmap decoding")
+
+if not api_tests_ran:
+    # A skipped leg must never look like a pass: exit non-zero so neither
+    # CI nor a human reader mistakes "not run" for "verified".
+    print("\nFAIL: the API leg never ran, so its results are unknown.")
+    sys.exit(1)

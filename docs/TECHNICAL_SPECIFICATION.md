@@ -25,7 +25,7 @@ Upload (T1c/T2/FLAIR, any subset)
      normalization, resize 144×144, grayscale→RGB, ImageNet normalization
    → composite = pixel-wise mean of the (up to 3) sequences
    → hybrid model (Branch A ⊕ Branch B)
-   → TTA probability averaging (48 views)
+   → TTA probability averaging (2 views)
    → sensitivity-first decision rule + confidence band
    → Grad-CAM++ per modality
    → WHO staging lookup + narrative generation
@@ -55,9 +55,31 @@ reproducibility. Class balance is preserved through both stages.
 
 ### 2.3 Augmentation (training only)
 
-`preprocessing.augment_mri_image` applies geometric (flips/rotations) and
-photometric transforms on the PIL image before tensorization. Validation and
-test transforms are deterministic — only resize + normalize.
+`preprocessing.augment_mri_image` applies geometric and photometric transforms
+on the PIL image before tensorization. Validation and test transforms are
+deterministic — only resize + normalize. All ranges are config-driven
+(`AUGMENT_*` in `config.py`) so the policy is tunable without editing code.
+
+| Axis | Transform | Range |
+|---|---|---|
+| Geometric | random resized crop (scale × aspect) | 0.75–1.00 × 0.90–1.10 |
+| | in-plane rotation | ± 12° |
+| | translation | ± 6 % of size |
+| | horizontal flip | p = 0.5 |
+| Photometric | brightness | 0.85–1.15 |
+| | contrast | 0.85–1.15 |
+| | gamma | 0.80–1.25 |
+| | Gaussian noise | σ = 0.015 |
+
+**Only the horizontal flip is used among flips, and rotations stay small.**
+An axial brain MRI is roughly bilaterally symmetric, so a mirror is a
+plausible scan; a vertical flip or a quarter-turn is not, and training on
+inputs no scanner produces wastes capacity. The TTA policy in §6.1 is kept
+inside these same ranges for the same reason.
+
+The photometric axis matters more than the geometric one on this dataset:
+scanner, sequence and centre differences appear mainly as intensity and
+bias-field variation, which is the dominant train/test domain gap.
 
 ---
 
@@ -230,13 +252,36 @@ ImageNet download at the point of care).
 
 ### 6.1 Test-Time Augmentation
 
-Full policy: 4 flips × 4 rotations (0/90/180/270°) × 3 scales
-(1.00/1.05/0.95) = 48 deterministic views (center-crop/pad keeps resolution
-constant). Each view's logits are temperature-scaled (`τ = 1.0` default),
-softmaxed, and **averaged in probability space** — probability averaging is
-less sensitive to a single pathological view than logit averaging or max
-selection. The deterministic even-subsample in `build_tta_transforms`
-(`max_views`) can reduce the set for tight VRAM budgets.
+Shipped policy: 2 flips (identity, horizontal mirror) × 1 rotation (0°) ×
+1 scale (1.00) = **2 deterministic views**. Each view's logits are
+temperature-scaled (`τ = 1.0` default), softmaxed, and **averaged in
+probability space** — probability averaging is less sensitive to a single
+pathological view than logit averaging or max selection. The deterministic
+even-subsample in `build_tta_transforms` (`max_views`) can reduce the set
+further for tight VRAM budgets.
+
+**Why the policy is this narrow.** An earlier version used 4 flips ×
+4 rotations (0/90/180/270°) × 3 scales = 48 views. Vertical flips and
+quarter-turns are anatomically invalid for an axial brain MRI — the model
+never saw such inputs in training, so its predictions on them are noise that
+gets averaged into the result. Measured on the full 1600-image held-out set,
+with the policy selected on a held-out split of `data/Training` and confirmed
+once on `data/Testing`:
+
+| policy | views | val acc | test acc | test macro F1 |
+|---|---|---|---|---|
+| no TTA | 1 | 0.9925 | 0.9513 | 0.9508 |
+| **hflip only (shipped)** | **2** | **0.9950** | **0.9556** | **0.9552** |
+| hflip × rot ±8° | 6 | 0.9875 | 0.9456 | 0.9450 |
+| hflip × scale | 6 | 0.9867 | 0.9394 | 0.9386 |
+| hflip × rot × scale | 18 | 0.9367 | 0.8906 | 0.8884 |
+| previous 8-view default | 8 | — | 0.8894 | 0.8888 |
+| previous 48-view grid | 48 | — | 0.8869 | 0.8859 |
+
+The 48-view grid scored below no-TTA. The TTA policy is therefore kept
+consistent with the training augmentation ranges in `config.py`: a view that
+falls outside the training distribution costs accuracy rather than reducing
+variance.
 
 ### 6.2 Sensitivity-first decision rule
 

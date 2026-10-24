@@ -40,6 +40,7 @@ from api.schemas import (
     ErrorResponse,
     HealthResponse,
     PredictionResponse,
+    WHOStaging,
 )
 from api.model_loader import ModelManager
 from api.utils import validate_and_load_image
@@ -277,6 +278,10 @@ async def predict(
         tumor_probability=result["tumor_probability"],
         potential_tumor=result["potential_tumor"],
         safety_alert=result["safety_alert"],
+        low_confidence=result["low_confidence"],
+        confidence_band=result["confidence_band"],
+        staging=WHOStaging(**result["staging"]) if result.get("staging") else None,
+        reasoning_text=result["reasoning_text"],
         gradcam_heatmap_base64=result["gradcam_heatmap_base64"],
         tta_used=result["tta_used"],
         num_tta_transforms=result["num_tta_transforms"],

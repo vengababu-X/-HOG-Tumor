@@ -148,10 +148,15 @@ if "last_result" not in st.session_state:
 # ==============================================================================
 # HELPER FUNCTIONS
 # ==============================================================================
-def check_api_health() -> Dict[str, Any]:
-    """Ping GET /health and return the parsed response or an error dict."""
+def check_api_health(api_url: Optional[str] = None) -> Dict[str, Any]:
+    """Ping GET /health and return the parsed response or an error dict.
+
+    `api_url` overrides the module-level API_BASE_URL, which lets the tests
+    (and any deployment with a non-default backend) point at another host.
+    """
+    base = (api_url or API_BASE_URL).rstrip("/")
     try:
-        resp = requests.get(f"{API_BASE_URL}/health", timeout=5)
+        resp = requests.get(f"{base}/health", timeout=5)
         resp.raise_for_status()
         return resp.json()
     except requests.exceptions.ConnectionError:
@@ -169,8 +174,13 @@ def call_predict_api(
     filename: str,
     use_tta: bool = True,
     generate_gradcam: bool = True,
+    api_url: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """POST an image to POST /predict. Returns parsed JSON on success."""
+    """POST an image to POST /predict. Returns parsed JSON on success.
+
+    `api_url` overrides the module-level API_BASE_URL (see check_api_health).
+    """
+    base = (api_url or API_BASE_URL).rstrip("/")
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "png"
     mime_map = {
         "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
@@ -179,7 +189,7 @@ def call_predict_api(
     content_type = mime_map.get(ext, "image/png")
 
     resp = requests.post(
-        f"{API_BASE_URL}/predict",
+        f"{base}/predict",
         files={"file": (filename, image_bytes, content_type)},
         data={
             "use_tta": str(use_tta).lower(),
@@ -431,10 +441,37 @@ else:
                 unsafe_allow_html=True,
             )
         else:
+            # Only claim high confidence when the model actually is confident:
+            # a low-confidence "No_Tumor" is precisely the case that must not
+            # read as reassurance.
+            if result.get("low_confidence", False):
+                st.markdown(
+                    '<div class="alert-banner">'
+                    "⚠️ No tumour class exceeded the alert threshold, but this "
+                    "result is LOW CONFIDENCE and is provisional."
+                    "<br><small>Secondary review by a qualified radiologist is "
+                    "required before any clinical use.</small>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    '<div class="success-banner">'
+                    "✅ No tumor detected with high confidence"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+
+        # Low-confidence safeguard: mirrors the standalone dashboard so an API
+        # consumer sees the same guard rail rather than a bare argmax.
+        if result.get("low_confidence", False):
+            band = result.get("confidence_band", "Low")
             st.markdown(
-                '<div class="success-banner">'
-                "✅ No tumor detected with high confidence"
-                "</div>",
+                f'<div class="alert-banner">'
+                f"🚨 LOW-CONFIDENCE SAFEGUARD — reliability band: {band}.<br>"
+                f"<small>This result is provisional and must be independently "
+                f"verified. Do not act on it without secondary review.</small>"
+                f"</div>",
                 unsafe_allow_html=True,
             )
 
@@ -474,6 +511,28 @@ else:
         st.markdown(f"**Confidence: {confidence:.2%}**")
         st.progress(confidence)
         st.markdown("---")
+
+        # WHO staging reference for the predicted class.
+        staging = result.get("staging") or {}
+        if staging:
+            st.markdown("### 🧬 WHO CNS Grade Reference")
+            st.caption(
+                "Reference information for the predicted tumour type. The model "
+                "classifies tumour type, it does not predict a patient's grade."
+            )
+            st.markdown(f"**{staging.get('grade_label', 'Unknown')}**")
+            s1, s2 = st.columns(2)
+            with s1:
+                st.markdown("**Typical imaging features**")
+                st.write(staging.get("typical_imaging_features", "—"))
+                st.markdown("**Malignancy profile**")
+                st.write(staging.get("malignancy", "—"))
+            with s2:
+                st.markdown("**Growth pattern**")
+                st.write(staging.get("growth_pattern", "—"))
+                st.markdown("**Reference intervention protocol**")
+                st.write(staging.get("recommended_intervention_protocol", "—"))
+            st.markdown("---")
 
         # Grad-CAM++ section
         gradcam_b64 = result.get("gradcam_heatmap_base64", "")

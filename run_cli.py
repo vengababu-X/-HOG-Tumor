@@ -8,10 +8,9 @@ suitable for a capstone presentation.
 Usage:
     python run_cli.py
 
-The script is intentionally standalone: it configures TensorFlow GPU memory
-growth itself so the demo does not depend on inference.py having done it
-first.  It imports FreeBuffInference from inference.py but never touches
-Streamlit, joblib-pickled explainers, or any web-UI code path.
+The script is intentionally standalone: it imports FreeBuffInference from
+inference.py but never touches Streamlit, joblib-pickled explainers, or any
+web-UI code path.
 """
 
 from __future__ import annotations
@@ -21,23 +20,33 @@ import sys
 from typing import Dict, Optional
 
 import numpy as np
-import tensorflow as tf
+import torch
+
+# The WHO staging text and the disclaimers contain typographic characters
+# (e.g. "≈", en dashes) that the Windows console's default cp1252 codepage
+# cannot encode, which aborted the run mid-report with UnicodeEncodeError.
+# Re-encode stdout/stderr as UTF-8 and degrade unrepresentable glyphs instead
+# of raising.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):  # non-reconfigurable stream
+        pass
 
 
-def configure_gpu_memory_growth() -> None:
-    """Enable TF GPU memory growth so single-image inference does not OOM."""
-    gpus = tf.config.list_physical_devices("GPU")
-    if not gpus:
-        print("[*] No TensorFlow-visible GPU detected — running on CPU.")
-        return
+def report_compute_device() -> None:
+    """Print the device this demo will run on.
 
-    for gpu in gpus:
-        try:
-            tf.config.experimental.set_memory_growth(gpu, True)
-            print(f"[*] GPU memory growth enabled: {gpu.name}")
-        except RuntimeError as exc:
-            print(f"[!] Could not set memory growth on {gpu.name}: {exc}")
-    print(f"[*] TensorFlow sees {len(gpus)} GPU(s).")
+    This used to configure TensorFlow GPU memory growth, which was left over
+    from the v1 Keras pipeline: the v4 model is PyTorch, TensorFlow is not a
+    dependency, and importing it made this entry point fail outright.
+    """
+    if torch.cuda.is_available():
+        name = torch.cuda.get_device_name(0)
+        total = torch.cuda.get_device_properties(0).total_memory / 1e9
+        print(f"[*] GPU detected: {name} ({total:.1f} GB) — running on cuda:0.")
+    else:
+        print("[*] No CUDA GPU detected — running on CPU.")
 
 
 def prompt_path(label: str) -> Optional[str]:
@@ -69,7 +78,7 @@ def main() -> None:
     print("=" * 64)
     print()
 
-    configure_gpu_memory_growth()
+    report_compute_device()
     print()
 
     models_dir = os.path.abspath("saved_models")
@@ -140,7 +149,9 @@ def main() -> None:
                 uploads[modality] = None
 
     missing_after_preprocess = [m for m, a in uploads.items() if a is None]
-    if not any(uploads.values()):
+    # bool() of a multi-element numpy array raises, so any() over the arrays
+    # cannot be used here — test for presence instead.
+    if all(a is None for a in uploads.values()):
         print("[!] No usable scan could be preprocessed. Exiting.")
         sys.exit(1)
 
@@ -185,7 +196,11 @@ def main() -> None:
     print(f"  Grade range    : {staging.get('grade_range', 'n/a')}")
     print(f"  Malignancy     : {staging.get('malignancy_profile', 'n/a')}")
     print()
+    # clinical_notes is a single string from the staging engine; iterating it
+    # directly printed one character per bullet.
     notes = staging.get("clinical_notes") or []
+    if isinstance(notes, str):
+        notes = [notes]
     if notes:
         print("  Clinical notes  :")
         for note in notes:

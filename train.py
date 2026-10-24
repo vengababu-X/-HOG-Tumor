@@ -62,7 +62,11 @@ from config import (
     EVALUATION_DIR,
     FOCAL_GAMMA,
     GRADIENT_CLIP_NORM,
+    IMG_SIZE,
+    INPUT_SIZE,
     LOG_DIR,
+    NORMALIZE_MEAN,
+    NORMALIZE_STD,
     NUM_CLASSES,
     NUM_EPOCHS,
     NUM_WORKERS,
@@ -410,6 +414,106 @@ def run_training(
 
 
 # ==============================================================================
+# DEPLOYMENT MANIFEST
+# ==============================================================================
+def write_deployment_manifest(
+    path: Union[str, Path],
+    checkpoint_path: Union[str, Path],
+    pca_path: Optional[Union[str, Path]],
+    model: nn.Module,
+    history_result: Dict[str, Any],
+    n_train: int,
+    n_val: int,
+    n_test: int,
+    num_epochs_requested: int,
+    seed: int,
+    gamma: float,
+    batch_size: int,
+    pca_components: Optional[int],
+) -> Path:
+    """Describe the artifacts this run produced, next to the checkpoint.
+
+    The manifest is what a deployment (or an examiner) reads to know which
+    architecture and which metrics the shipped weights correspond to, so every
+    field is taken from the live model and this run's results rather than
+    hardcoded.
+    """
+    import hashlib
+    import json
+    from datetime import datetime, timezone
+
+    checkpoint_path = Path(checkpoint_path)
+    path = Path(path)
+
+    def _sha256(p: Path) -> Optional[str]:
+        if not p.exists():
+            return None
+        h = hashlib.sha256()
+        with open(p, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+
+    n_params = sum(p.numel() for p in model.parameters())
+    n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    manifest = {
+        "artifact_version": 4,
+        "generated_by": "train.py",
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "architecture": {
+            "name": "FreeBuffV4",
+            "deep_branch": "ResNet50 + CBAM (channel + spatial attention)",
+            "handcrafted_branch": "HOG -> PCA -> MLP",
+            "fusion_head": "768 -> 512 -> 256 -> 4",
+            "total_params": int(n_params),
+            "trainable_params": int(n_trainable),
+        },
+        "input": {
+            "img_size": IMG_SIZE,
+            "input_size": list(INPUT_SIZE),
+            "normalize_mean": list(NORMALIZE_MEAN),
+            "normalize_std": list(NORMALIZE_STD),
+        },
+        "class_names": list(CLASSES),
+        "hog_pca_components": pca_components,
+        "training": {
+            "epochs_requested": int(num_epochs_requested),
+            "epochs_completed": int(history_result.get("num_epochs_completed", 0)),
+            "best_epoch": int(history_result.get("best_epoch", 0)),
+            "batch_size": int(batch_size),
+            "focal_gamma": float(gamma),
+            "seed": int(seed),
+            "device": str(history_result.get("device", "")),
+            "n_train": int(n_train),
+            "n_val": int(n_val),
+            "n_internal_test": int(n_test),
+        },
+        "metrics": {
+            "best_val_acc": history_result.get("best_val_acc"),
+            "internal_test_acc": history_result.get("test_acc"),
+            "internal_test_f1": history_result.get("test_f1"),
+            "note": (
+                "These are the internal splits of the training folder. The "
+                "held-out data/Testing figures are produced by evaluate.py."
+            ),
+        },
+        "artifacts": {
+            "checkpoint": checkpoint_path.name,
+            "checkpoint_sha256": _sha256(checkpoint_path),
+            "pca": Path(pca_path).name if pca_path else None,
+            "pca_sha256": _sha256(Path(pca_path)) if pca_path else None,
+        },
+    }
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, indent=2)
+    logger.info("Deployment manifest written to %s", path)
+    return path
+
+
+# ==============================================================================
 # END-TO-END RUNNER
 # ==============================================================================
 def run(
@@ -448,6 +552,7 @@ def run(
     # ---- HOG PCA fitting (train split only — no leakage) --------------------
     hog_extractor: Optional[HOGExtractor] = None
     pca_model = None
+    pca_out = None
     if use_pca_hog:
         hog_extractor = HOGExtractor()
         logger.info("Fitting HOG-PCA (%d components) on the training split…",
@@ -458,8 +563,15 @@ def run(
         import joblib
         from config import DEFAULT_PCA_PATH
 
-        joblib.dump(pca_model, DEFAULT_PCA_PATH)
-        logger.info("PCA transformer saved to %s", DEFAULT_PCA_PATH)
+        # The PCA must stay paired with the checkpoint that was trained on it:
+        # a mismatched pair silently degrades the HOG branch. So when the run
+        # is directed at its own checkpoint_dir, the PCA goes there too,
+        # instead of overwriting the deployed saved_models artifact.
+        pca_out = (Path(checkpoint_dir) / DEFAULT_PCA_PATH.name
+                   if checkpoint_dir else DEFAULT_PCA_PATH)
+        pca_out.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(pca_model, pca_out)
+        logger.info("PCA transformer saved to %s", pca_out)
 
     # ---- rebuild datasets with the fitted extractor / PCA -------------------
     def _materialize(subset: torch.utils.data.Subset, augment: bool) -> BrainTumorDataset:
@@ -544,6 +656,26 @@ def run(
         "device": str(device),
     }
     logger.info("Training run summary: %s", result)
+
+    # ---- deployment manifest ------------------------------------------------
+    # Written next to the checkpoint it describes, from the values this run
+    # actually produced. Without this the manifest goes stale and ends up
+    # describing a different architecture than the one that ships.
+    try:
+        write_deployment_manifest(
+            path=model_save_path.parent / "manifest.json",
+            checkpoint_path=model_save_path,
+            pca_path=pca_out if use_pca_hog else None,
+            model=model,
+            history_result=result,
+            n_train=len(train_ds), n_val=len(val_ds), n_test=len(test_ds),
+            num_epochs_requested=num_epochs,
+            seed=seed, gamma=gamma, batch_size=batch_size,
+            pca_components=pca_components if use_pca_hog else None,
+        )
+    except Exception as exc:  # never fail a finished run over metadata
+        logger.warning("Could not write deployment manifest: %s", exc)
+
     return result
 
 

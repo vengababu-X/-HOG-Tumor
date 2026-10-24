@@ -40,6 +40,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from config import (
+    LOW_CONFIDENCE_THRESHOLD,
     NARRATIVE_ENABLED,
     NARRATIVE_FALLBACK_TO_TEMPLATE,
     NARRATIVE_INCONCLUSIVE_PHRASE,
@@ -113,6 +114,27 @@ _TEMPLATE_SECTIONS = {
 }
 
 
+def _prob_for(probs: Dict[str, object], class_name: str) -> float:
+    """Look up a class probability regardless of label spelling.
+
+    The engine keys `probabilities` with the canonical labels from
+    config.CLASSES ("Glioma", "No_Tumor", ...), while the narrative templates
+    iterate lowercase, unpunctuated names ("glioma", "notumor"). A plain
+    `probs.get("glioma")` therefore missed every entry and the narrative
+    reported 0.0% for all four classes even on a confident prediction.
+    """
+    if not isinstance(probs, dict):
+        return 0.0
+    want = class_name.strip().lower().replace("_", "").replace("-", "").replace(" ", "")
+    for key, value in probs.items():
+        if str(key).strip().lower().replace("_", "").replace("-", "").replace(" ", "") == want:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return 0.0
+    return 0.0
+
+
 def _build_template_narrative(result: Dict[str, object]) -> Dict[str, object]:
     """Fill the template sections with the structured result."""
     probs = result.get("probabilities", {})
@@ -122,7 +144,7 @@ def _build_template_narrative(result: Dict[str, object]) -> Dict[str, object]:
 
     prob_lines = []
     for cls_name in ["glioma", "meningioma", "notumor", "pituitary"]:
-        p = float(probs.get(cls_name, 0.0))
+        p = _prob_for(probs, cls_name)
         prob_lines.append(f"{cls_name}: {p*100:.1f}%")
     probabilities_list = "; ".join(prob_lines)
 
@@ -221,7 +243,10 @@ def _build_template_narrative(result: Dict[str, object]) -> Dict[str, object]:
         "narrative": narrative,
         "model_used": "none (template fallback)",
         "confidence_note": (
-            "Low-confidence warning" if conf < NARRATIVE_LOW_CONFIDENCE_WARN
+            # NARRATIVE_LOW_CONFIDENCE_WARN is the warning *sentence*; the
+            # numeric cut-off is LOW_CONFIDENCE_THRESHOLD. Comparing a float
+            # against the sentence raised TypeError on every call.
+            NARRATIVE_LOW_CONFIDENCE_WARN if conf < LOW_CONFIDENCE_THRESHOLD
             else "Confidence within acceptable range"
         ),
         "disclaimer": (
@@ -259,7 +284,7 @@ def _build_clinical_snapshot(result: Dict[str, object], dicom_meta: Optional[Dic
         "CONFIDENCE DISTRIBUTION:",
     ]
     for cls in ["glioma", "meningioma", "notumor", "pituitary"]:
-        p = float(probs.get(cls, 0.0))
+        p = _prob_for(probs, cls)
         lines.append(f"  {cls}: {p*100:.1f}%")
 
     lines.append("")
@@ -280,10 +305,10 @@ def _build_clinical_snapshot(result: Dict[str, object], dicom_meta: Optional[Dic
         lines.append(f"  - {m}")
     lines.append("")
 
-    if conf < NARRATIVE_LOW_CONFIDENCE_WARN:
+    if conf < LOW_CONFIDENCE_THRESHOLD:
         lines.append(
             f"NOTE: Model confidence ({conf*100:.1f}%) is below the "
-            f"{NARRATIVE_LOW_CONFIDENCE_WARN*100:.0f}% threshold. The "
+            f"{LOW_CONFIDENCE_THRESHOLD*100:.0f}% threshold. The "
             f"narrative should reflect this uncertainty."
         )
         lines.append("")
@@ -542,8 +567,8 @@ def generate_narrative(
 
     conf = float(result.get("confidence", 0.0))
     confidence_note = (
-        "Low-confidence warning — narrative reflects uncertainty."
-        if conf < NARRATIVE_LOW_CONFIDENCE_WARN
+        NARRATIVE_LOW_CONFIDENCE_WARN
+        if conf < LOW_CONFIDENCE_THRESHOLD
         else "Confidence within acceptable range."
     )
 

@@ -173,6 +173,31 @@ LABEL_SMOOTHING: float = 0.0
 ENTROPY_REG_WEIGHT: float = 0.0
 
 # ==============================================================================
+# TRAINING AUGMENTATION
+# ==============================================================================
+# Geometric and photometric jitter applied by preprocessing.augment_mri_image.
+#
+# Only anatomically plausible transforms belong here: an axial brain MRI is
+# roughly left-right symmetric, so a horizontal flip is valid, while vertical
+# flips and 90/180/270 rotations are not (they produce scans no scanner would
+# ever emit). The TTA policy below is kept consistent with these ranges - a
+# test-time view outside the training distribution costs accuracy rather than
+# reducing variance.
+#
+# Photometric jitter (brightness / gamma / noise) is the important axis for
+# MRI: scanner, sequence and centre differences show up mainly as intensity
+# and bias-field variation, which is the dominant train/test domain gap.
+AUGMENT_ROTATION_DEG: float = 12.0        # +/- degrees of in-plane rotation
+AUGMENT_TRANSLATE_FRAC: float = 0.06      # max translation as a fraction of size
+AUGMENT_SCALE_RANGE: Tuple[float, float] = (0.75, 1.0)   # random resized crop
+AUGMENT_RATIO_RANGE: Tuple[float, float] = (0.90, 1.10)  # aspect jitter
+AUGMENT_HFLIP_P: float = 0.5              # horizontal flip probability
+AUGMENT_BRIGHTNESS: Tuple[float, float] = (0.85, 1.15)
+AUGMENT_CONTRAST: Tuple[float, float] = (0.85, 1.15)
+AUGMENT_GAMMA: Tuple[float, float] = (0.80, 1.25)
+AUGMENT_NOISE_STD: float = 0.015          # Gaussian noise sigma (0 disables)
+
+# ==============================================================================
 # LEARNING RATE SCHEDULER
 # ==============================================================================
 # Cosine annealing scheduler parameters.
@@ -242,15 +267,37 @@ NARRATIVE_TOP_P: float = 0.9
 # TEST-TIME AUGMENTATION (TTA) CONFIGURATION
 # ==============================================================================
 # TTA policy set applied during evaluation and inference to reduce variance.
-TTA_FLIPS: List[str] = ["none", "horizontal", "vertical", "both"]
-TTA_ROTATIONS_DEG: List[int] = [0, 90, 180, 270]
-TTA_SCALE_FACTORS: List[float] = [1.0, 1.05, 0.95]
+#
+# Only views a scanner could plausibly produce belong here. An axial brain MRI
+# is roughly bilaterally symmetric, so the mirror image is a valid second look;
+# vertical flips and quarter-turns are not, and averaging the model's opinion
+# of an upside-down brain into the result costs accuracy instead of reducing
+# variance.
+#
+# Measured on the full 1600-image held-out set (data/Testing), with the policy
+# selected on a held-out split of data/Training and only then confirmed on the
+# test set:
+#
+#   views  policy                      val acc   test acc   test macro F1
+#       1  no TTA                       0.9925     0.9513          0.9508
+#       2  hflip                        0.9950     0.9556          0.9552  <-
+#       6  hflip x rot +-8 deg          0.9875     0.9456          0.9450
+#       6  hflip x scale                0.9867     0.9394          0.9386
+#      18  hflip x rot x scale          0.9367     0.8906          0.8884
+#       8  previous default (rot 90/180/270 + vertical flips)  0.8894
+#      48  full previous grid                                  0.8869
+#
+# The previous default cost 6.6 accuracy points against this one.
+TTA_FLIPS: List[str] = ["none", "horizontal"]
+TTA_ROTATIONS_DEG: List[int] = [0]
+TTA_SCALE_FACTORS: List[float] = [1.0]
 
 # Whether to enable full TTA (flips + rotations + scale) or a reduced set.
 TTA_FULL: bool = True
 
 # Number of TTA samples aggregated per input image (deterministic subset).
-TTA_NUM_SAMPLES: int = 8
+# 2 = the full cartesian product of the policy above (identity + mirror).
+TTA_NUM_SAMPLES: int = 2
 
 # Smoothing factor applied to TTA-averaged logits (post-softmax temperature).
 TTA_SOFTMAX_TEMP: float = 1.0

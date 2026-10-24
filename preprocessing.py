@@ -14,7 +14,22 @@ from PIL import Image, ImageEnhance
 from torchvision.transforms import InterpolationMode
 from torchvision.transforms import functional as TF
 
-from config import INPUT_SIZE, INTENSITY_CLIP_MAX, INTENSITY_CLIP_MIN, NORMALIZE_MEAN, NORMALIZE_STD
+from config import (
+    AUGMENT_BRIGHTNESS,
+    AUGMENT_CONTRAST,
+    AUGMENT_GAMMA,
+    AUGMENT_HFLIP_P,
+    AUGMENT_NOISE_STD,
+    AUGMENT_RATIO_RANGE,
+    AUGMENT_ROTATION_DEG,
+    AUGMENT_SCALE_RANGE,
+    AUGMENT_TRANSLATE_FRAC,
+    INPUT_SIZE,
+    INTENSITY_CLIP_MAX,
+    INTENSITY_CLIP_MIN,
+    NORMALIZE_MEAN,
+    NORMALIZE_STD,
+)
 
 
 def crop_brain_field(image: Image.Image, margin_ratio: float = 0.06) -> Image.Image:
@@ -77,27 +92,67 @@ def image_to_tensor(image: Image.Image, size: Tuple[int, int] = INPUT_SIZE) -> t
     return TF.normalize(tensor, mean=list(NORMALIZE_MEAN), std=list(NORMALIZE_STD))
 
 
-def augment_mri_image(image: Image.Image) -> Image.Image:
-    """Apply conservative MRI augmentation after foreground cropping.
+def _uniform(low: float, high: float) -> float:
+    """Sample a scalar uniformly from [low, high] using the torch RNG.
 
-    Random resized crop supplies center zoom and scale variation; affine
-    translation and rotation prevent reliance on fixed skull-edge coordinates.
+    Routing through torch keeps augmentation reproducible under the single
+    seed set by config.set_all_seeds.
+    """
+    return float(torch.empty(1).uniform_(float(low), float(high)).item())
+
+
+def augment_mri_image(image: Image.Image) -> Image.Image:
+    """Apply MRI augmentation after foreground cropping.
+
+    Geometry: random resized crop supplies centre zoom and scale variation;
+    affine translation and rotation prevent reliance on fixed skull-edge
+    coordinates. Only the horizontal flip is used - an axial brain MRI is
+    roughly left-right symmetric, but vertical flips and quarter-turns are
+    anatomically invalid and teach the model nothing a scanner would produce.
+
+    Photometry: brightness, contrast, gamma and mild Gaussian noise emulate
+    the scanner, sequence and centre variation that drives the train/test
+    domain gap on this dataset. All ranges come from config so the policy is
+    tunable without editing this function.
     """
     image = crop_brain_field(image)
     width, height = image.size
-    scale = float(torch.empty(1).uniform_(0.78, 1.0).item())
-    ratio = float(torch.empty(1).uniform_(0.92, 1.08).item())
+
+    # ---- geometry ----------------------------------------------------------
+    scale = _uniform(*AUGMENT_SCALE_RANGE)
+    ratio = _uniform(*AUGMENT_RATIO_RANGE)
     crop_h = max(1, min(height, int(height * scale)))
     crop_w = max(1, min(width, int(width * scale / ratio)))
     top = int(torch.randint(0, max(1, height - crop_h + 1), (1,)).item())
     left = int(torch.randint(0, max(1, width - crop_w + 1), (1,)).item())
-    image = TF.resized_crop(image, top, left, crop_h, crop_w, (height, width), InterpolationMode.BILINEAR)
-    angle = float(torch.empty(1).uniform_(-8.0, 8.0).item())
-    translate = (int(width * 0.04), int(height * 0.04))
-    image = TF.affine(image, angle=angle, translate=(
-        int(torch.randint(-translate[0], translate[0] + 1, (1,)).item()),
-        int(torch.randint(-translate[1], translate[1] + 1, (1,)).item()),
-    ), scale=1.0, shear=(0.0, 0.0), interpolation=InterpolationMode.BILINEAR)
-    if bool(torch.rand(1).item() < 0.5):
+    image = TF.resized_crop(image, top, left, crop_h, crop_w, (height, width),
+                            InterpolationMode.BILINEAR)
+
+    angle = _uniform(-AUGMENT_ROTATION_DEG, AUGMENT_ROTATION_DEG)
+    max_dx = max(1, int(width * AUGMENT_TRANSLATE_FRAC))
+    max_dy = max(1, int(height * AUGMENT_TRANSLATE_FRAC))
+    image = TF.affine(
+        image, angle=angle,
+        translate=(
+            int(torch.randint(-max_dx, max_dx + 1, (1,)).item()),
+            int(torch.randint(-max_dy, max_dy + 1, (1,)).item()),
+        ),
+        scale=1.0, shear=(0.0, 0.0), interpolation=InterpolationMode.BILINEAR,
+    )
+    if bool(torch.rand(1).item() < AUGMENT_HFLIP_P):
         image = TF.hflip(image)
-    return ImageEnhance.Contrast(image).enhance(float(torch.empty(1).uniform_(0.9, 1.1).item()))
+
+    # ---- photometry --------------------------------------------------------
+    image = ImageEnhance.Brightness(image).enhance(_uniform(*AUGMENT_BRIGHTNESS))
+    image = ImageEnhance.Contrast(image).enhance(_uniform(*AUGMENT_CONTRAST))
+
+    gamma = _uniform(*AUGMENT_GAMMA)
+    if abs(gamma - 1.0) > 1e-3:
+        image = TF.adjust_gamma(image, gamma)
+
+    if AUGMENT_NOISE_STD > 0:
+        arr = np.asarray(image, dtype=np.float32) / 255.0
+        arr = arr + np.random.normal(0.0, AUGMENT_NOISE_STD, arr.shape).astype(np.float32)
+        image = Image.fromarray((np.clip(arr, 0.0, 1.0) * 255.0).astype(np.uint8))
+
+    return image
