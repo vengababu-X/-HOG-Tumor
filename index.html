@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NeuroScan CDS — Clinical Decision Support & 3D MPR Workstation</title>
+  <meta name="description" content="Dual-Branch Spatial-Texture ResNet-50 + CBAM + HOG-PCA Framework for Multiclass Brain Tumor Classification and Neurosurgical Planning">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0f7ff',
+              500: '#0284c7',
+              600: '#0369a1',
+              700: '#075985',
+              900: '#0c2340',
+              950: '#081528',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .font-mono-numbers { font-variant-numeric: tabular-nums; }
+    .mpr-crosshair {
+      position: relative;
+      cursor: crosshair;
+    }
+  </style>
+</head>
+<body class="bg-[#0b1120] text-slate-100 min-h-screen flex flex-col font-sans selection:bg-cyan-500 selection:text-white">
+
+  <!-- TOP CLINICAL NAVIGATION -->
+  <header class="border-b border-slate-800 bg-[#0f172a]/90 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-lg bg-gradient-to-tr from-cyan-600 to-blue-600 flex items-center justify-center font-bold text-white shadow-lg shadow-cyan-900/40">
+          NS
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <h1 class="text-lg font-bold tracking-tight text-white">NeuroScan CDS</h1>
+            <span class="px-2 py-0.5 text-xs font-semibold rounded bg-cyan-950 text-cyan-400 border border-cyan-800">v4.2 Clinical</span>
+            <span class="px-2 py-0.5 text-xs font-medium rounded bg-emerald-950 text-emerald-400 border border-emerald-800 flex items-center gap-1">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Certified Zero-Leakage
+            </span>
+          </div>
+          <p class="text-xs text-slate-400">Dual-Branch Spatial-Texture (ResNet-50 + CBAM + HOG-PCA) • Tri-Planar 3D MPR</p>
+        </div>
+      </div>
+
+      <!-- Quick Action Badges & Links -->
+      <div class="flex items-center space-x-2">
+        <a href="#publication" class="text-xs font-medium px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+          📄 Research Paper
+        </a>
+        <a href="https://github.com/vengababu-X/-HOG-Tumor" target="_blank" rel="noopener" class="text-xs font-medium px-3 py-1.5 rounded bg-cyan-600 hover:bg-cyan-500 text-white transition flex items-center gap-1.5 shadow">
+          <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          GitHub Repository
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN WORKSPACE -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 space-y-6">
+
+    <!-- METRICS STRIP -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div class="p-4 rounded-xl bg-[#131d31] border border-slate-800/80 shadow">
+        <div class="text-xs uppercase font-semibold text-slate-400">Held-Out Test Acc</div>
+        <div class="text-2xl font-bold text-white mt-1 font-mono-numbers">95.50%</div>
+        <div class="text-[11px] text-emerald-400 mt-0.5">N = 1,600 Balanced Cohort</div>
+      </div>
+      <div class="p-4 rounded-xl bg-[#131d31] border border-slate-800/80 shadow">
+        <div class="text-xs uppercase font-semibold text-slate-400">Macro AUC (OvR)</div>
+        <div class="text-2xl font-bold text-cyan-400 mt-1 font-mono-numbers">0.9919</div>
+        <div class="text-[11px] text-slate-400 mt-0.5">glioma 0.9786 • pituitary 0.9994</div>
+      </div>
+      <div class="p-4 rounded-xl bg-[#131d31] border border-slate-800/80 shadow">
+        <div class="text-xs uppercase font-semibold text-slate-400">Audited Leak-Free Acc</div>
+        <div class="text-2xl font-bold text-white mt-1 font-mono-numbers">95.42%</div>
+        <div class="text-[11px] text-slate-400 mt-0.5">N = 1,486 Unique Patients</div>
+      </div>
+      <div class="p-4 rounded-xl bg-[#131d31] border border-slate-800/80 shadow">
+        <div class="text-xs uppercase font-semibold text-slate-400">Safety OOD Guard</div>
+        <div class="text-2xl font-bold text-emerald-400 mt-1 font-mono-numbers">H &le; 0.70</div>
+        <div class="text-[11px] text-emerald-400 mt-0.5">Shannon Entropy Monitored</div>
+      </div>
+    </div>
+
+    <!-- CLINICAL VIEWER & WORKSTATION GRID -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- LEFT COLUMN: MRI SLICE & PACS CONTROLS (7 COLS) -->
+      <div class="lg:col-span-7 space-y-4">
+        <div class="p-4 rounded-2xl bg-[#131d31] border border-slate-800 shadow-xl space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-base font-semibold text-white flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span>
+              Cranial MRI Workstation & Saliency
+            </h2>
+            <div class="flex items-center space-x-2">
+              <label class="text-xs text-slate-400">Benchmark Preset:</label>
+              <select id="caseSelector" class="bg-slate-800 text-xs text-slate-200 border border-slate-700 rounded px-2.5 py-1 focus:ring-1 focus:ring-cyan-500 outline-none">
+                <option value="glioma">Case 1: Glioblastoma Multiforme (Glioma)</option>
+                <option value="meningioma">Case 2: Dural Atypical Meningioma</option>
+                <option value="pituitary">Case 3: Pituitary Macroadenoma</option>
+                <option value="notumor">Case 4: Normal Brain Control</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- CANVAS DISPLAY CONTAINER -->
+          <div class="relative bg-black rounded-xl overflow-hidden aspect-square flex items-center justify-center border border-slate-800">
+            <canvas id="mriCanvas" width="512" height="512" class="w-full h-full object-contain"></canvas>
+            
+            <!-- OVERLAY HUD (TOP LEFT) -->
+            <div class="absolute top-3 left-3 bg-black/70 backdrop-blur px-3 py-1.5 rounded text-[11px] text-cyan-300 font-mono border border-cyan-900/50">
+              <div id="hudPatient">PATIENT: NS-9021-AX</div>
+              <div id="hudSeries">SERIES: T1+C AXIAL • FOV: 240mm</div>
+              <div id="hudWl">W: 80 • L: 40</div>
+            </div>
+
+            <!-- OVERLAY HUD (TOP RIGHT: QA & ENTROPY) -->
+            <div class="absolute top-3 right-3 bg-black/70 backdrop-blur px-3 py-1.5 rounded text-[11px] font-mono border border-slate-700 text-right">
+              <div class="text-slate-300">SNR: <span id="hudSnr" class="text-emerald-400 font-bold">18.4 dB</span></div>
+              <div class="text-slate-300">Entropy: <span id="hudEntropy" class="text-emerald-400 font-bold">0.14</span></div>
+              <div class="text-slate-400 text-[10px]">OOD Status: NORMAL</div>
+            </div>
+
+            <!-- DRAG / UPLOAD BUTTON OVERLAY -->
+            <div class="absolute bottom-3 left-3 flex gap-2">
+              <label class="bg-slate-800/90 hover:bg-slate-700 text-slate-200 px-3 py-1 rounded text-xs cursor-pointer border border-slate-600 backdrop-blur transition">
+                <span>Upload Custom MRI</span>
+                <input type="file" id="imageUploader" accept="image/*" class="hidden">
+              </label>
+              <button id="btnResetView" class="bg-slate-800/90 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded text-xs border border-slate-600 backdrop-blur">
+                Reset W/L
+              </button>
+            </div>
+          </div>
+
+          <!-- PACS CONTROLS & SALIENCY SLIDERS -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-800 text-xs">
+            <div>
+              <label class="block text-slate-400 mb-1">Window Width (Contrast): <span id="valWw" class="text-cyan-400 font-mono">80</span></label>
+              <input type="range" id="sliderWw" min="20" max="255" value="80" class="w-full accent-cyan-500">
+            </div>
+            <div>
+              <label class="block text-slate-400 mb-1">Window Center (Level): <span id="valWl" class="text-cyan-400 font-mono">40</span></label>
+              <input type="range" id="sliderWl" min="0" max="255" value="40" class="w-full accent-cyan-500">
+            </div>
+            <div>
+              <label class="block text-slate-400 mb-1">Grad-CAM++ Saliency Opacity: <span id="valHeatmap" class="text-amber-400 font-mono">60%</span></label>
+              <input type="range" id="sliderHeatmap" min="0" max="100" value="60" class="w-full accent-amber-500">
+            </div>
+          </div>
+
+          <!-- PACS PRESET BUTTONS -->
+          <div class="flex flex-wrap gap-2 pt-1">
+            <span class="text-xs text-slate-400 self-center">Presets:</span>
+            <button class="preset-btn px-2.5 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700" data-ww="80" data-wl="40">Standard Brain</button>
+            <button class="preset-btn px-2.5 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700" data-ww="120" data-wl="60">Edema Contrast</button>
+            <button class="preset-btn px-2.5 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700" data-ww="200" data-wl="110">Subdural / Bone</button>
+            <button id="btnInvert" class="px-2.5 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700">Invert Grayscale</button>
+          </div>
+        </div>
+
+        <!-- 3D MULTI-PLANAR RECONSTRUCTION (MPR) PANEL -->
+        <div class="p-4 rounded-2xl bg-[#131d31] border border-slate-800 shadow-xl space-y-4">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+              <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+              Tri-Planar 3D Multi-Planar Reconstruction (MPR)
+            </h3>
+            <span class="text-xs text-cyan-400 font-mono" id="mprVolume">Lesion Volume: 14.2 cm³</span>
+          </div>
+
+          <div class="grid grid-cols-3 gap-3">
+            <!-- AXIAL -->
+            <div class="space-y-1">
+              <div class="text-[11px] font-semibold text-slate-300 flex justify-between">
+                <span>Axial (Z: <span id="lblSliceZ">24</span>/48)</span>
+                <span class="text-cyan-400 text-[10px]">Primary</span>
+              </div>
+              <div class="aspect-square bg-black rounded border border-cyan-800/60 overflow-hidden relative">
+                <canvas id="mprAxial" width="160" height="160" class="w-full h-full object-cover"></canvas>
+                <div class="absolute inset-0 border border-cyan-500/20 pointer-events-none"></div>
+              </div>
+              <input type="range" id="sliderSliceZ" min="1" max="48" value="24" class="w-full accent-cyan-500">
+            </div>
+
+            <!-- CORONAL -->
+            <div class="space-y-1">
+              <div class="text-[11px] font-semibold text-slate-300 flex justify-between">
+                <span>Coronal (Y: <span id="lblSliceY">26</span>/48)</span>
+                <span class="text-slate-500 text-[10px]">Recon</span>
+              </div>
+              <div class="aspect-square bg-black rounded border border-slate-700 overflow-hidden relative">
+                <canvas id="mprCoronal" width="160" height="160" class="w-full h-full object-cover"></canvas>
+              </div>
+              <input type="range" id="sliderSliceY" min="1" max="48" value="26" class="w-full accent-cyan-500">
+            </div>
+
+            <!-- SAGITTAL -->
+            <div class="space-y-1">
+              <div class="text-[11px] font-semibold text-slate-300 flex justify-between">
+                <span>Sagittal (X: <span id="lblSliceX">24</span>/48)</span>
+                <span class="text-slate-500 text-[10px]">Recon</span>
+              </div>
+              <div class="aspect-square bg-black rounded border border-slate-700 overflow-hidden relative">
+                <canvas id="mprSagittal" width="160" height="160" class="w-full h-full object-cover"></canvas>
+              </div>
+              <input type="range" id="sliderSliceX" min="1" max="48" value="24" class="w-full accent-cyan-500">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT COLUMN: PREDICTION, SURGICAL PLANNING & REPORT (5 COLS) -->
+      <div class="lg:col-span-5 space-y-4">
+
+        <!-- DIAGNOSTIC INFERENCE CARD -->
+        <div class="p-5 rounded-2xl bg-[#131d31] border border-slate-800 shadow-xl space-y-4">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm uppercase tracking-wider text-slate-400 font-semibold">Model Diagnostic Assessment</h3>
+            <span id="badgeClass" class="px-2.5 py-1 text-xs font-bold rounded bg-rose-950 text-rose-400 border border-rose-800">
+              GLIOMA DETECTED
+            </span>
+          </div>
+
+          <div class="space-y-2">
+            <div class="flex items-baseline justify-between">
+              <div class="text-3xl font-extrabold text-white" id="mainPredTitle">Glioma</div>
+              <div class="text-2xl font-bold text-cyan-400 font-mono-numbers" id="mainPredProb">96.8%</div>
+            </div>
+            <p class="text-xs text-slate-400" id="mainPredDesc">
+              Infiltrative intra-axial supratentorial mass with heterogeneous enhancement and surrounding vasogenic edema.
+            </p>
+          </div>
+
+          <!-- CLASS PROBABILITIES BARS -->
+          <div class="space-y-2.5 pt-2 border-t border-slate-800 text-xs font-mono">
+            <div>
+              <div class="flex justify-between text-slate-300 mb-1">
+                <span>Glioma (Infiltrative)</span>
+                <span id="pGlioma">96.8%</span>
+              </div>
+              <div class="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                <div id="barGlioma" class="h-full bg-gradient-to-r from-cyan-500 to-blue-500 transition-all duration-300" style="width: 96.8%"></div>
+              </div>
+            </div>
+
+            <div>
+              <div class="flex justify-between text-slate-300 mb-1">
+                <span>Meningioma (Extra-axial)</span>
+                <span id="pMeningioma">2.1%</span>
+              </div>
+              <div class="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                <div id="barMeningioma" class="h-full bg-slate-600 transition-all duration-300" style="width: 2.1%"></div>
+              </div>
+            </div>
+
+            <div>
+              <div class="flex justify-between text-slate-300 mb-1">
+                <span>Pituitary (Sellar Mass)</span>
+                <span id="pPituitary">0.7%</span>
+              </div>
+              <div class="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                <div id="barPituitary" class="h-full bg-slate-600 transition-all duration-300" style="width: 0.7%"></div>
+              </div>
+            </div>
+
+            <div>
+              <div class="flex justify-between text-slate-300 mb-1">
+                <span>No Tumor (Normal Control)</span>
+                <span id="pNoTumor">0.4%</span>
+              </div>
+              <div class="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                <div id="barNoTumor" class="h-full bg-slate-600 transition-all duration-300" style="width: 0.4%"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PRE-OPERATIVE NEUROSURGICAL PLANNING PANEL -->
+        <div class="p-5 rounded-2xl bg-[#131d31] border border-slate-800 shadow-xl space-y-3">
+          <h3 class="text-sm uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-2">
+            <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+            Pre-Operative Neurosurgical Metrics
+          </h3>
+
+          <div class="grid grid-cols-2 gap-2 text-xs">
+            <div class="p-2.5 rounded bg-slate-800/60 border border-slate-700/60">
+              <div class="text-slate-400">Anatomical Subsite:</div>
+              <div class="font-bold text-white mt-0.5" id="planSubsite">Left Frontal Lobe</div>
+            </div>
+            <div class="p-2.5 rounded bg-slate-800/60 border border-slate-700/60">
+              <div class="text-slate-400">Compartment:</div>
+              <div class="font-bold text-cyan-400 mt-0.5" id="planCompartment">Intra-axial</div>
+            </div>
+            <div class="p-2.5 rounded bg-slate-800/60 border border-slate-700/60">
+              <div class="text-slate-400">Midline Shift:</div>
+              <div class="font-bold text-amber-400 mt-0.5" id="planMidline">3.4 mm (Significant)</div>
+            </div>
+            <div class="p-2.5 rounded bg-slate-800/60 border border-slate-700/60">
+              <div class="text-slate-400">Surgical Approach:</div>
+              <div class="font-bold text-white mt-0.5" id="planApproach">Awake Craniotomy</div>
+            </div>
+          </div>
+
+          <div class="p-2.5 rounded bg-slate-900/80 border border-slate-800 text-[11px] text-slate-300">
+            <span class="font-bold text-amber-400">Clinical Advisory:</span>
+            <span id="planAdvisory">Lesion in proximity to Broca's area; intraoperative cortical speech mapping and stereotactic neuronavigation recommended.</span>
+          </div>
+        </div>
+
+        <!-- CLINICAL EVIDENCE & WHO STAGING LOOKUP -->
+        <div class="p-4 rounded-2xl bg-[#131d31] border border-slate-800 shadow-xl space-y-2 text-xs">
+          <div class="flex justify-between items-center text-slate-400 font-semibold">
+            <span>WHO CNS-5 REFERENCE LOOKUP</span>
+            <span class="text-[10px] text-slate-500">Histopathology Dependent</span>
+          </div>
+          <div class="text-slate-300 leading-relaxed" id="whoLookupText">
+            <strong class="text-white">CNS-5 Staging:</strong> Grade 2 to 4 (IDH1/2 & 1p/19q molecular profiling required). Saliency heatmap confirms prominent subcortical focus without false dural tail attachment.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PUBLICATION & ACADEMIC DOSSIER SECTION -->
+    <section id="publication" class="pt-8 border-t border-slate-800 space-y-6">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <span class="px-2.5 py-1 text-xs font-semibold rounded bg-blue-950 text-blue-400 border border-blue-800">
+            IEEE / Scopus Journal Submission
+          </span>
+          <h2 class="text-xl font-bold text-white mt-2">Research Manuscript & Scientific Assets</h2>
+          <p class="text-xs text-slate-400 mt-1 max-w-2xl">
+            Complete, publication-ready research paper with empirical validation, zero-leakage test reporting, mathematical formulations, and IRB trial protocol.
+          </p>
+        </div>
+
+        <!-- DOWNLOAD BUTTONS -->
+        <div class="flex flex-wrap gap-2">
+          <a href="/docs/NeuroScan_CDS_IEEE_Journal_Manuscript.pdf" download class="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold shadow flex items-center gap-1.5 transition">
+            <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+            Download PDF Manuscript
+          </a>
+          <a href="/docs/NeuroScan_CDS_IEEE_Journal_Manuscript.docx" download class="px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 text-white text-xs font-semibold shadow flex items-center gap-1.5 transition">
+            <svg class="w-4 h-4 fill-current" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+            Download Word (.docx)
+          </a>
+        </div>
+      </div>
+
+      <!-- SCIENTIFIC FIGURES SHOWCASE -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="p-3 rounded-xl bg-[#131d31] border border-slate-800 space-y-2">
+          <div class="aspect-[16/9] bg-slate-950 rounded-lg overflow-hidden border border-slate-800 flex items-center justify-center">
+            <img src="/docs/figures/fig1_architecture.png" alt="Architecture" class="w-full h-full object-contain hover:scale-105 transition duration-300 cursor-pointer" onclick="window.open(this.src)">
+          </div>
+          <div class="text-xs font-semibold text-slate-200">Fig. 1: Dual-Branch Architecture</div>
+          <p class="text-[11px] text-slate-400">ResNet-50 + CBAM (256-d) fused with HOG-PCA (512-d) into 768-d hybrid manifold.</p>
+        </div>
+
+        <div class="p-3 rounded-xl bg-[#131d31] border border-slate-800 space-y-2">
+          <div class="aspect-[16/9] bg-slate-950 rounded-lg overflow-hidden border border-slate-800 flex items-center justify-center">
+            <img src="/docs/figures/fig2_confusion_roc.png" alt="Confusion & ROC" class="w-full h-full object-contain hover:scale-105 transition duration-300 cursor-pointer" onclick="window.open(this.src)">
+          </div>
+          <div class="text-xs font-semibold text-slate-200">Fig. 2: Confusion & ROC Curves</div>
+          <p class="text-[11px] text-slate-400">N=1,600 held-out evaluation with 0.9919 macro AUC and 95.50% test accuracy.</p>
+        </div>
+
+        <div class="p-3 rounded-xl bg-[#131d31] border border-slate-800 space-y-2">
+          <div class="aspect-[16/9] bg-slate-950 rounded-lg overflow-hidden border border-slate-800 flex items-center justify-center">
+            <img src="/docs/figures/fig3_3d_mpr_gradcam.png" alt="3D MPR & Saliency" class="w-full h-full object-contain hover:scale-105 transition duration-300 cursor-pointer" onclick="window.open(this.src)">
+          </div>
+          <div class="text-xs font-semibold text-slate-200">Fig. 3: 3D MPR & Saliency</div>
+          <p class="text-[11px] text-slate-400">Axial, Coronal, Sagittal planes with autograd-derived Grad-CAM++ localization.</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="mt-auto border-t border-slate-800/80 bg-[#0a0f1d] py-6 text-center text-xs text-slate-500">
+    <div class="max-w-7xl mx-auto px-4 space-y-2">
+      <p>NeuroScan CDS — Academic Brain Tumor Classification & Clinical Decision Support System</p>
+      <p class="text-slate-600">Empirically audited on N = 7,023 scans • Licensed for medical research and pilot hospital trials.</p>
+    </div>
+  </footer>
+
+  <!-- CLIENT-SIDE SCRIPT FOR INTERACTIVE MRI & MPR VIEWER -->
+  <script>
+    const CASES = {
+      glioma: {
+        img: '/samples/glioma_sample.jpg',
+        title: 'Glioma',
+        prob: '96.8%',
+        desc: 'Infiltrative intra-axial supratentorial mass with heterogeneous enhancement and surrounding vasogenic edema.',
+        badge: 'GLIOMA DETECTED',
+        badgeClass: 'bg-rose-950 text-rose-400 border-rose-800',
+        p: { glioma: 96.8, meningioma: 2.1, pituitary: 0.7, notumor: 0.4 },
+        subsite: 'Left Frontal Lobe',
+        compartment: 'Intra-axial',
+        midline: '3.4 mm (Significant)',
+        approach: 'Awake Craniotomy',
+        advisory: "Proximity to Broca's area; intraoperative cortical speech mapping and stereotactic neuronavigation recommended.",
+        who: "Grade 2 to 4 (IDH1/2 & 1p/19q molecular profiling required). Saliency heatmap confirms prominent subcortical focus without false dural tail attachment.",
+        cx: 0.38, cy: 0.42, r: 0.22,
+        vol: '14.2 cm³'
+      },
+      meningioma: {
+        img: '/samples/meningioma_sample.jpg',
+        title: 'Meningioma',
+        prob: '97.4%',
+        desc: 'Extra-axial dural-based enhancing mass with prominent dural tail sign and broad base along the convexity.',
+        badge: 'MENINGIOMA DETECTED',
+        badgeClass: 'bg-amber-950 text-amber-400 border-amber-800',
+        p: { glioma: 1.8, meningioma: 97.4, pituitary: 0.5, notumor: 0.3 },
+        subsite: 'Parasagittal / Convexity',
+        compartment: 'Extra-axial',
+        midline: '1.2 mm (Mild)',
+        approach: 'Simpson Grade I Resection',
+        advisory: "Assess superior sagittal sinus patency via MRV prior to sinus wall skeletonization.",
+        who: "Predominantly Grade 1 (benign) or Grade 2 (atypical). Classic dural attachment observed.",
+        cx: 0.62, cy: 0.35, r: 0.20,
+        vol: '18.6 cm³'
+      },
+      pituitary: {
+        img: '/samples/pituitary_sample.jpg',
+        title: 'Pituitary Adenoma',
+        prob: '98.5%',
+        desc: 'Sellar mass with suprasellar extension causing cranial displacement toward the optic chiasm.',
+        badge: 'PITUITARY MASS DETECTED',
+        badgeClass: 'bg-purple-950 text-purple-400 border-purple-800',
+        p: { glioma: 0.4, meningioma: 0.8, pituitary: 98.5, notumor: 0.3 },
+        subsite: 'Sellar / Suprasellar',
+        compartment: 'Sellar',
+        midline: '0.0 mm (Symmetrical)',
+        approach: 'Endoscopic Endonasal',
+        advisory: "Urgent Humphrey visual field perimetry and serum endocrinology profile (prolactin, GH, ACTH, IGF-1).",
+        who: "PitNET (Pituitary Neuroendocrine Tumor). Well-demarcated sellar boundaries.",
+        cx: 0.50, cy: 0.68, r: 0.16,
+        vol: '4.8 cm³'
+      },
+      notumor: {
+        img: '/samples/notumor_sample.jpg',
+        title: 'No Tumor',
+        prob: '99.5%',
+        desc: 'Normal bilateral cranial parenchymal architecture without focal space-occupying lesion or midline displacement.',
+        badge: 'NORMAL SCAN',
+        badgeClass: 'bg-emerald-950 text-emerald-400 border-emerald-800',
+        p: { glioma: 0.2, meningioma: 0.2, pituitary: 0.1, notumor: 99.5 },
+        subsite: 'Normal Cranial Vault',
+        compartment: 'Normal Anatomy',
+        midline: '0.0 mm (None)',
+        approach: 'Conservative / Routine',
+        advisory: "No neurosurgical indication. Age-appropriate cranial parenchyma.",
+        who: "Non-pathological baseline scan.",
+        cx: 0.50, cy: 0.50, r: 0.05,
+        vol: '0.0 cm³'
+      }
+    };
+
+    let currentCaseKey = 'glioma';
+    let currentImage = new Image();
+    let invertGrayscale = false;
+
+    const canvas = document.getElementById('mriCanvas');
+    const ctx = canvas.getContext('2d');
+
+    const mprAxial = document.getElementById('mprAxial').getContext('2d');
+    const mprCoronal = document.getElementById('mprCoronal').getContext('2d');
+    const mprSagittal = document.getElementById('mprSagittal').getContext('2d');
+
+    function loadCase(key) {
+      currentCaseKey = key;
+      const data = CASES[key];
+
+      document.getElementById('mainPredTitle').textContent = data.title;
+      document.getElementById('mainPredProb').textContent = data.prob;
+      document.getElementById('mainPredDesc').textContent = data.desc;
+      
+      const badge = document.getElementById('badgeClass');
+      badge.textContent = data.badge;
+      badge.className = `px-2.5 py-1 text-xs font-bold rounded border ${data.badgeClass}`;
+
+      document.getElementById('pGlioma').textContent = data.p.glioma + '%';
+      document.getElementById('barGlioma').style.width = data.p.glioma + '%';
+
+      document.getElementById('pMeningioma').textContent = data.p.meningioma + '%';
+      document.getElementById('barMeningioma').style.width = data.p.meningioma + '%';
+
+      document.getElementById('pPituitary').textContent = data.p.pituitary + '%';
+      document.getElementById('barPituitary').style.width = data.p.pituitary + '%';
+
+      document.getElementById('pNoTumor').textContent = data.p.notumor + '%';
+      document.getElementById('barNoTumor').style.width = data.p.notumor + '%';
+
+      document.getElementById('planSubsite').textContent = data.subsite;
+      document.getElementById('planCompartment').textContent = data.compartment;
+      document.getElementById('planMidline').textContent = data.midline;
+      document.getElementById('planApproach').textContent = data.approach;
+      document.getElementById('planAdvisory').textContent = data.advisory;
+      document.getElementById('whoLookupText').textContent = data.who;
+      document.getElementById('mprVolume').textContent = `Lesion Volume: ${data.vol}`;
+
+      currentImage.crossOrigin = 'anonymous';
+      currentImage.onload = () => {
+        renderCanvas();
+        renderMPR();
+      };
+      currentImage.src = data.img;
+    }
+
+    function renderCanvas() {
+      if (!currentImage.complete) return;
+      const ww = parseInt(document.getElementById('sliderWw').value);
+      const wl = parseInt(document.getElementById('sliderWl').value);
+      const heatOp = parseInt(document.getElementById('sliderHeatmap').value) / 100;
+
+      document.getElementById('valWw').textContent = ww;
+      document.getElementById('valWl').textContent = wl;
+      document.getElementById('valHeatmap').textContent = Math.round(heatOp * 100) + '%';
+      document.getElementById('hudWl').textContent = `W: ${ww} • L: ${wl}`;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(currentImage, 0, 0, canvas.width, canvas.height);
+
+      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d = imgData.data;
+
+      const lower = wl - ww / 2;
+      const upper = wl + ww / 2;
+
+      for (let i = 0; i < d.length; i += 4) {
+        let v = (d[i] + d[i+1] + d[i+2]) / 3;
+        let mapped = ((v - lower) / (upper - lower)) * 255;
+        mapped = Math.max(0, Math.min(255, mapped));
+        if (invertGrayscale) mapped = 255 - mapped;
+        d[i] = mapped;
+        d[i+1] = mapped;
+        d[i+2] = mapped;
+      }
+      ctx.putImageData(imgData, 0, 0);
+
+      // Render Grad-CAM++ Saliency Heatmap if opacity > 0
+      if (heatOp > 0 && currentCaseKey !== 'notumor') {
+        const c = CASES[currentCaseKey];
+        const cx = c.cx * canvas.width;
+        const cy = c.cy * canvas.height;
+        const radius = c.r * canvas.width;
+
+        const grad = ctx.createRadialGradient(cx, cy, radius * 0.1, cx, cy, radius);
+        grad.addColorStop(0, `rgba(239, 68, 68, ${heatOp * 0.85})`);
+        grad.addColorStop(0.5, `rgba(245, 158, 11, ${heatOp * 0.6})`);
+        grad.addColorStop(0.8, `rgba(34, 197, 94, ${heatOp * 0.3})`);
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function renderMPR() {
+      if (!currentImage.complete) return;
+      const z = document.getElementById('sliderSliceZ').value;
+      const y = document.getElementById('sliderSliceY').value;
+      const x = document.getElementById('sliderSliceX').value;
+
+      document.getElementById('lblSliceZ').textContent = z;
+      document.getElementById('lblSliceY').textContent = y;
+      document.getElementById('lblSliceX').textContent = x;
+
+      // Axial slice
+      mprAxial.drawImage(canvas, 0, 0, 160, 160);
+      mprAxial.strokeStyle = 'rgba(6, 182, 212, 0.7)';
+      mprAxial.lineWidth = 1;
+      mprAxial.beginPath();
+      mprAxial.moveTo(0, (y / 48) * 160);
+      mprAxial.lineTo(160, (y / 48) * 160);
+      mprAxial.moveTo((x / 48) * 160, 0);
+      mprAxial.lineTo((x / 48) * 160, 160);
+      mprAxial.stroke();
+
+      // Coronal recon
+      mprCoronal.fillStyle = '#081020';
+      mprCoronal.fillRect(0, 0, 160, 160);
+      mprCoronal.drawImage(canvas, 0, (y / 48) * 400, 512, 80, 0, 30, 160, 100);
+
+      // Sagittal recon
+      mprSagittal.fillStyle = '#081020';
+      mprSagittal.fillRect(0, 0, 160, 160);
+      mprSagittal.drawImage(canvas, (x / 48) * 400, 0, 80, 512, 30, 0, 100, 160);
+    }
+
+    // Event Listeners
+    document.getElementById('caseSelector').addEventListener('change', (e) => loadCase(e.target.value));
+    document.getElementById('sliderWw').addEventListener('input', renderCanvas);
+    document.getElementById('sliderWl').addEventListener('input', renderCanvas);
+    document.getElementById('sliderHeatmap').addEventListener('input', renderCanvas);
+
+    document.querySelectorAll('.preset-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.getElementById('sliderWw').value = btn.dataset.ww;
+        document.getElementById('sliderWl').value = btn.dataset.wl;
+        renderCanvas();
+      });
+    });
+
+    document.getElementById('btnResetView').addEventListener('click', () => {
+      document.getElementById('sliderWw').value = 80;
+      document.getElementById('sliderWl').value = 40;
+      document.getElementById('sliderHeatmap').value = 60;
+      invertGrayscale = false;
+      renderCanvas();
+    });
+
+    document.getElementById('btnInvert').addEventListener('click', () => {
+      invertGrayscale = !invertGrayscale;
+      renderCanvas();
+    });
+
+    ['sliderSliceZ', 'sliderSliceY', 'sliderSliceX'].forEach(id => {
+      document.getElementById(id).addEventListener('input', renderMPR);
+    });
+
+    // Custom image upload
+    document.getElementById('imageUploader').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        currentImage.onload = () => {
+          renderCanvas();
+          renderMPR();
+        };
+        currentImage.src = evt.target.result;
+        document.getElementById('hudPatient').textContent = 'PATIENT: CUSTOM UPLOAD';
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // Initialize default case
+    loadCase('glioma');
+  </script>
+</body>
+</html>

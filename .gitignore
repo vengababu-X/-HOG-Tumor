@@ -15,3 +15,6 @@ data_clean/
 
 # Confidence calibration fitted per deployment site (calibrate.py --apply)
 saved_models/calibration.json
+
+.vercel
+.env*
