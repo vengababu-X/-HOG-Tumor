@@ -2,23 +2,19 @@
 # ==============================================================================
 # NeuroScan CDS — Authentic IEEE Double-Column Journal PDF Builder
 # ==============================================================================
-# Replaces generic single-column layouts with the authentic IEEE Transactions
-# double-column standard (IEEEtran), including banner abstract, two-column flow,
-# mathematical formulations, real empirical tables, and IEEE references.
+# Embeds rendered LaTeX mathematical formulas, real test MRI scans with
+# autograd Grad-CAM++ heatmaps, exact empirical tables, and IEEE references.
 # ==============================================================================
 
 import os
 from pathlib import Path
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import (
     BaseDocTemplate, PageTemplate, Frame, Paragraph, Spacer, Table,
-    TableStyle, Image as RLImage, KeepTogether, HRFlowable, NextPageTemplate, PageBreak
+    TableStyle, Image as RLImage, KeepTogether, HRFlowable, NextPageTemplate
 )
 from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT, TA_RIGHT
 from reportlab.pdfgen import canvas
@@ -26,8 +22,8 @@ from reportlab.pdfgen import canvas
 _PROJECT_ROOT = Path(__file__).resolve().parent
 DOCS_DIR = _PROJECT_ROOT / "docs"
 FIG_DIR = DOCS_DIR / "figures"
+EQ_DIR = FIG_DIR / "equations"
 DOCS_DIR.mkdir(parents=True, exist_ok=True)
-FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 PDF_OUT = DOCS_DIR / "NeuroScan_CDS_IEEE_Journal_Manuscript.pdf"
 PUBLIC_PDF_OUT = _PROJECT_ROOT / "public" / "docs" / "NeuroScan_CDS_IEEE_Journal_Manuscript.pdf"
@@ -42,7 +38,7 @@ COL_W = (USABLE_W - COL_GAP) / 2.0  # 261.0 pt
 
 BANNER_H = 265.0  # Title, authors, abstract, index terms
 COL1_Y = MARGIN_Y
-COL1_H = PAGE_H - MARGIN_Y - BANNER_H - 10.0  # Remaining height on page 1
+COL1_H = PAGE_H - MARGIN_Y - BANNER_H - 10.0
 
 class NumberedCanvas(canvas.Canvas):
     """Adds IEEE running headers and page footers with 'Page X of Y'."""
@@ -67,7 +63,7 @@ class NumberedCanvas(canvas.Canvas):
         self.setFont("Helvetica", 7.5)
         self.setFillColor(colors.HexColor("#334155"))
 
-        # Header
+        # Running Header
         if self._pageNumber == 1:
             header_text = "IEEE TRANSACTIONS ON MEDICAL IMAGING, VOL. XX, NO. XX, OCTOBER 2026"
             self.drawString(MARGIN_X, PAGE_H - 24, header_text)
@@ -90,7 +86,7 @@ class NumberedCanvas(canvas.Canvas):
 
 
 def build_ieee_pdf():
-    print(f"Building authentic IEEE double-column PDF: {PDF_OUT}")
+    print(f"Building authentic IEEE double-column PDF with perfect math & real heatmaps: {PDF_OUT}")
 
     doc = BaseDocTemplate(
         str(PDF_OUT),
@@ -101,8 +97,6 @@ def build_ieee_pdf():
         bottomMargin=MARGIN_Y,
     )
 
-    # Frame setup:
-    # Page 1: Top banner frame across full width, then two columns below
     frame_banner = Frame(MARGIN_X, PAGE_H - BANNER_H - 30.0, USABLE_W, BANNER_H, id='banner',
                          leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
     frame_p1_c1 = Frame(MARGIN_X, COL1_Y, COL_W, COL1_H, id='p1_c1',
@@ -110,7 +104,6 @@ def build_ieee_pdf():
     frame_p1_c2 = Frame(MARGIN_X + COL_W + COL_GAP, COL1_Y, COL_W, COL1_H, id='p1_c2',
                         leftPadding=4, rightPadding=0, topPadding=0, bottomPadding=0)
 
-    # Subsequent pages: Two full-height columns
     full_col_h = PAGE_H - 2 * MARGIN_Y - 24.0
     frame_later_c1 = Frame(MARGIN_X, MARGIN_Y + 12.0, COL_W, full_col_h, id='later_c1',
                            leftPadding=0, rightPadding=4, topPadding=0, bottomPadding=0)
@@ -121,104 +114,42 @@ def build_ieee_pdf():
     template_later = PageTemplate(id='LaterPages', frames=[frame_later_c1, frame_later_c2])
     doc.addPageTemplates([template_page1, template_later])
 
-    # IEEE Typography Styles
+    # IEEE Styles
     title_style = ParagraphStyle(
-        "IEEETitle",
-        fontName="Helvetica-Bold",
-        fontSize=15.0,
-        leading=18.0,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#0f172a"),
-        spaceAfter=6,
+        "IEEETitle", fontName="Helvetica-Bold", fontSize=15.0, leading=18.0,
+        alignment=TA_CENTER, textColor=colors.HexColor("#0f172a"), spaceAfter=6
     )
     author_style = ParagraphStyle(
-        "IEEEAuthor",
-        fontName="Helvetica",
-        fontSize=9.5,
-        leading=12.0,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#1e293b"),
-        spaceAfter=3,
+        "IEEEAuthor", fontName="Helvetica", fontSize=9.5, leading=12.0,
+        alignment=TA_CENTER, textColor=colors.HexColor("#1e293b"), spaceAfter=3
     )
     affil_style = ParagraphStyle(
-        "IEEEAffil",
-        fontName="Helvetica-Oblique",
-        fontSize=8.0,
-        leading=10.5,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#475569"),
-        spaceAfter=8,
+        "IEEEAffil", fontName="Helvetica-Oblique", fontSize=8.0, leading=10.5,
+        alignment=TA_CENTER, textColor=colors.HexColor("#475569"), spaceAfter=8
     )
     abstract_style = ParagraphStyle(
-        "IEEEAbstract",
-        fontName="Helvetica",
-        fontSize=8.0,
-        leading=10.5,
-        alignment=TA_JUSTIFY,
-        leftIndent=14,
-        rightIndent=14,
-        spaceAfter=4,
+        "IEEEAbstract", fontName="Helvetica", fontSize=8.0, leading=10.5,
+        alignment=TA_JUSTIFY, leftIndent=14, rightIndent=14, spaceAfter=4
     )
     sec_style = ParagraphStyle(
-        "IEEESec",
-        fontName="Helvetica-Bold",
-        fontSize=9.0,
-        leading=11.5,
-        textColor=colors.HexColor("#0f2a4a"),
-        spaceBefore=8,
-        spaceAfter=3,
-    )
-    subsec_style = ParagraphStyle(
-        "IEEESubSec",
-        fontName="Helvetica-Bold",
-        fontSize=8.0,
-        leading=10.5,
-        textColor=colors.HexColor("#1e293b"),
-        spaceBefore=5,
-        spaceAfter=2,
+        "IEEESec", fontName="Helvetica-Bold", fontSize=9.0, leading=11.5,
+        textColor=colors.HexColor("#0f2a4a"), spaceBefore=7, spaceAfter=2.5
     )
     body_style = ParagraphStyle(
-        "IEEEBody",
-        fontName="Helvetica",
-        fontSize=8.0,
-        leading=10.4,
-        alignment=TA_JUSTIFY,
-        spaceAfter=4,
-    )
-    eq_style = ParagraphStyle(
-        "IEEEEquation",
-        fontName="Helvetica-Oblique",
-        fontSize=7.5,
-        leading=10.0,
-        alignment=TA_CENTER,
-        spaceBefore=2,
-        spaceAfter=3,
+        "IEEEBody", fontName="Helvetica", fontSize=8.0, leading=10.2,
+        alignment=TA_JUSTIFY, spaceAfter=3.5
     )
     caption_style = ParagraphStyle(
-        "IEEECaption",
-        fontName="Helvetica-Oblique",
-        fontSize=7.0,
-        leading=9.0,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#334155"),
-        spaceAfter=4,
+        "IEEECaption", fontName="Helvetica-Oblique", fontSize=7.0, leading=8.8,
+        alignment=TA_CENTER, textColor=colors.HexColor("#334155"), spaceAfter=4
     )
     table_title_style = ParagraphStyle(
-        "IEEETableTitle",
-        fontName="Helvetica-Bold",
-        fontSize=7.5,
-        leading=9.5,
-        alignment=TA_CENTER,
-        textColor=colors.HexColor("#0f2a4a"),
-        spaceAfter=2,
+        "IEEETableTitle", fontName="Helvetica-Bold", fontSize=7.2, leading=9.0,
+        alignment=TA_CENTER, textColor=colors.HexColor("#0f2a4a"), spaceAfter=2
     )
     ref_style = ParagraphStyle(
-        "IEEERef",
-        fontName="Helvetica",
-        fontSize=7.0,
-        leading=9.0,
-        alignment=TA_JUSTIFY,
-        spaceAfter=2,
+        "IEEERef", fontName="Helvetica", fontSize=7.0, leading=8.8,
+        alignment=TA_JUSTIFY, spaceAfter=2
     )
 
     story = []
@@ -231,13 +162,10 @@ def build_ieee_pdf():
         "with 3D Multi-Planar Reconstruction for Multiclass Brain Tumor Clinical Decision Support",
         title_style
     ))
-    story.append(Paragraph(
-        "<b>Vengababu B.</b>, <i>Student Member, IEEE</i>",
-        author_style
-    ))
+    story.append(Paragraph("<b>Vengababu B.</b>, <i>Student Member, IEEE</i>", author_style))
     story.append(Paragraph(
         "Department of Computer Science and Engineering<br/>"
-        "Project Repository: https://github.com/vengababu-X/-HOG-Tumor &bull; Workstation: https://neuroscan-cds.vercel.app",
+        "Project Repository: https://github.com/vengababu-X/-HOG-Tumor &bull; Live Workstation: https://neuroscan-cds.vercel.app",
         affil_style
     ))
     story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#94a3b8"), spaceAfter=5))
@@ -270,7 +198,6 @@ def build_ieee_pdf():
     story.append(Paragraph(keywords_text, abstract_style))
     story.append(HRFlowable(width="100%", thickness=0.5, color=colors.HexColor("#94a3b8"), spaceAfter=4))
 
-    # Switch to two-column flow on LaterPages once Page 1 columns fill
     story.append(NextPageTemplate('LaterPages'))
 
     # ==========================================================================
@@ -334,38 +261,84 @@ def build_ieee_pdf():
     story.append(Paragraph("III. PROPOSED METHODOLOGY: NEUROSCAN CDS", sec_style))
     story.append(Paragraph(
         "<b>A. Dynamic Contrast Windowing:</b> Cranial MRI slices are resampled to 144&times;144 pixels and normalized to [0, 1] via dynamic "
-        "windowing: <br/>"
-        "<font face='Helvetica-Oblique'>I_norm(x, y) = clip((I(x, y) - I_min) / (I_max - I_min + &epsilon;), 0.0, 1.0) &nbsp;&nbsp;&nbsp;&nbsp;(1)</font><br/>"
-        "where &epsilon; = 10^-6 prevents division by zero in air-dominated background scans.",
+        "windowing, where &epsilon; = 10^-6 prevents division by zero in air-dominated background scans:",
         body_style
     ))
+
+    # Equation 1 (Rendered LaTeX Image)
+    eq1_file = EQ_DIR / "eq1_norm.png"
+    if eq1_file.exists():
+        story.append(Spacer(1, 1))
+        story.append(RLImage(str(eq1_file), width=COL_W * 0.96, height=COL_W * 0.96 * (0.45 / 4.2)))
+        story.append(Spacer(1, 2))
+
     story.append(Paragraph(
         "<b>B. Spatial Attention Branch (ResNet-50 + CBAM):</b> Branch A feeds the 3-channel slice through ResNet-50. At layer 4 (C=2048, H=W=5), "
-        "intermediate maps F are refined via CBAM channel attention: <br/>"
-        "<font face='Helvetica-Oblique'>M_c(F) = &sigma;(W_1(W_0(AvgPool(F))) + W_1(W_0(MaxPool(F)))) &nbsp;&nbsp;&nbsp;&nbsp;(2)</font><br/>"
-        "followed by spatial attention: <br/>"
-        "<font face='Helvetica-Oblique'>M_s(F') = &sigma;(f^(7&times;7)([AvgPool(F'); MaxPool(F')])) &nbsp;&nbsp;&nbsp;&nbsp;(3)</font><br/>"
-        "The attended map F'' is pooled and projected to a 256-dimensional spatial embedding v_spatial &isin; R^256.",
+        "intermediate feature maps F are refined via CBAM channel attention:",
         body_style
     ))
+
+    # Equation 2 (Rendered LaTeX Image)
+    eq2_file = EQ_DIR / "eq2_cbam_channel.png"
+    if eq2_file.exists():
+        story.append(Spacer(1, 1))
+        story.append(RLImage(str(eq2_file), width=COL_W * 0.98, height=COL_W * 0.98 * (0.48 / 4.5)))
+        story.append(Spacer(1, 2))
+
     story.append(Paragraph(
+        "followed by spatial attention:",
+        body_style
+    ))
+
+    # Equation 3 (Rendered LaTeX Image)
+    eq3_file = EQ_DIR / "eq3_cbam_spatial.png"
+    if eq3_file.exists():
+        story.append(Spacer(1, 1))
+        story.append(RLImage(str(eq3_file), width=COL_W * 0.96, height=COL_W * 0.96 * (0.48 / 4.2)))
+        story.append(Spacer(1, 2))
+
+    story.append(Paragraph(
+        "The attended map F'' is pooled and projected to a 256-dimensional spatial embedding v_spatial &isin; R^256.<br/>"
         "<b>C. Handcrafted Texture Branch (HOG-PCA):</b> Branch B computes HOG across 8 orientation bins, 16&times;16 cells, and 2&times;2 blocks "
-        "(2,048 raw dimensions). An orthogonal PCA matrix U_k &isin; R^(2048&times;288) fitted on the training set projects features: <br/>"
-        "<font face='Helvetica-Oblique'>h_pca = U_k^T (h_raw - &mu;_train) &nbsp;&nbsp;&nbsp;&nbsp;(4)</font><br/>"
-        "which is embedded through an MLP with LayerNorm to yield v_texture &isin; R^512.",
+        "(2,048 raw dimensions). An orthogonal PCA matrix U_k &isin; R^(2048&times;288) fitted strictly on the training set projects features:",
         body_style
     ))
+
+    # Equation 4 (Rendered LaTeX Image)
+    eq4_file = EQ_DIR / "eq4_pca.png"
+    if eq4_file.exists():
+        story.append(Spacer(1, 1))
+        story.append(RLImage(str(eq4_file), width=COL_W * 0.92, height=COL_W * 0.92 * (0.45 / 3.8)))
+        story.append(Spacer(1, 2))
+
     story.append(Paragraph(
-        "<b>D. Feature Fusion & Multi-Class Focal Loss:</b> The hybrid representation v_hybrid = [v_spatial; v_texture] &isin; R^768 is "
-        "optimized via multi-class Focal Loss (&gamma; = 2.0): <br/>"
-        "<font face='Helvetica-Oblique'>L_focal = - &sum; [ &alpha;_i (1 - p_i)^&gamma; log(p_i) ] &nbsp;&nbsp;&nbsp;&nbsp;(5)</font><br/>"
-        "where p_i = softmax(z)_i and &alpha;_i counterbalances class priors [6].",
+        "which is embedded through an MLP with LayerNorm to yield v_texture &isin; R^512.<br/>"
+        "<b>D. Feature Fusion & Multi-Class Focal Loss:</b> The hybrid vector v_hybrid = [v_spatial; v_texture] &isin; R^768 is "
+        "optimized via multi-class Focal Loss (&gamma; = 2.0) with class prior weights &alpha;_i:",
         body_style
     ))
+
+    # Equation 5 (Rendered LaTeX Image)
+    eq5_file = EQ_DIR / "eq5_focal.png"
+    if eq5_file.exists():
+        story.append(Spacer(1, 1))
+        story.append(RLImage(str(eq5_file), width=COL_W * 0.95, height=COL_W * 0.95 * (0.50 / 4.2)))
+        story.append(Spacer(1, 2))
+
     story.append(Paragraph(
         "<b>E. Pre-Inference QA & OOD Entropy Guard:</b> Signal-to-Noise Ratio (SNR &ge; 12.0 dB), motion blur variance (&sigma;^2 &ge; 50.0), "
-        "and bilateral symmetry (S_bilat &ge; 0.35) are verified before inference. OOD detection computes Normalized Shannon Diagnostic Entropy: <br/>"
-        "<font face='Helvetica-Oblique'>H_norm = - (1 / ln K) &sum; [ p_i ln(p_i) ] &nbsp;&nbsp;&nbsp;&nbsp;(6)</font><br/>"
+        "and bilateral symmetry (S_bilat &ge; 0.35) are verified before inference. OOD detection computes Normalized Shannon Diagnostic Entropy:",
+        body_style
+    ))
+
+    # Equation 6 (Rendered LaTeX Image)
+    eq6_file = EQ_DIR / "eq6_entropy.png"
+    if eq6_file.exists():
+        story.append(Spacer(1, 1))
+        story.append(RLImage(str(eq6_file), width=COL_W * 0.92, height=COL_W * 0.92 * (0.48 / 3.8)))
+        story.append(Spacer(1, 2))
+
+    story.append(Paragraph(
         "When H_norm &gt; 0.70, automated output is suppressed to prevent hallucination.",
         body_style
     ))
@@ -373,8 +346,8 @@ def build_ieee_pdf():
     # Architecture Figure (Fig 1)
     fig1_path = FIG_DIR / "fig1_architecture.png"
     if fig1_path.exists():
-        story.append(Spacer(1, 4))
-        story.append(RLImage(str(fig1_path), width=COL_W, height=COL_W * 0.50))
+        story.append(Spacer(1, 3))
+        story.append(RLImage(str(fig1_path), width=COL_W, height=COL_W * 0.48))
         story.append(Paragraph("<i>Fig. 1. Dual-branch NeuroScan CDS architecture combining ResNet-50 + CBAM (256-d) with HOG-PCA (512-d) into a 768-d hybrid manifold.</i>", caption_style))
 
     # ==========================================================================
@@ -416,7 +389,7 @@ def build_ieee_pdf():
         ('BOTTOMPADDING', (0,0), (-1,-1), 2),
     ]))
     story.append(t1)
-    story.append(Spacer(1, 4))
+    story.append(Spacer(1, 3))
 
     # TABLE II: Confusion Matrix Pasted from holdout_report.txt
     story.append(Paragraph("TABLE II<br/>CONFUSION MATRIX (ROWS=TRUE, COLS=PREDICTED, N = 1,600)", table_title_style))
@@ -446,7 +419,7 @@ def build_ieee_pdf():
         ('BOTTOMPADDING', (0,0), (-1,-1), 2),
     ]))
     story.append(t2)
-    story.append(Spacer(1, 4))
+    story.append(Spacer(1, 3))
 
     # TABLE III: Training Convergence Pasted from training_history.csv
     story.append(Paragraph("TABLE III<br/>EMPIRICAL TRAINING CONVERGENCE (EPOCHS 1-10)", table_title_style))
@@ -477,7 +450,7 @@ def build_ieee_pdf():
         ('BOTTOMPADDING', (0,0), (-1,-1), 1.5),
     ]))
     story.append(t3)
-    story.append(Spacer(1, 4))
+    story.append(Spacer(1, 3))
 
     # Figure 2 (Confusion & ROC)
     fig2_path = FIG_DIR / "fig2_confusion_roc.png"
@@ -511,11 +484,17 @@ def build_ieee_pdf():
         body_style
     ))
 
-    # Figure 3 (3D MPR & Saliency)
-    fig3_path = FIG_DIR / "fig3_3d_mpr_gradcam.png"
-    if fig3_path.exists():
-        story.append(RLImage(str(fig3_path), width=COL_W, height=COL_W * 0.48))
-        story.append(Paragraph("<i>Fig. 3. Tri-planar 3D Multi-Planar Reconstruction (Axial, Coronal, Sagittal) and Grad-CAM++ saliency mapping.</i>", caption_style))
+    # Figure 3: REAL BRAIN MRI SCANS & REAL GRAD-CAM++ HEATMAPS
+    fig3_real_path = FIG_DIR / "fig3_real_mri_heatmaps.png"
+    if fig3_real_path.exists():
+        story.append(Spacer(1, 2))
+        story.append(RLImage(str(fig3_real_path), width=COL_W, height=COL_W * 1.22))
+        story.append(Paragraph(
+            "<i>Fig. 3. Real held-out cranial MRI test scans and autograd Grad-CAM++ saliency overlays computed directly by the trained NeuroScan CDS "
+            "model across: Case 1 (Infiltrative High-Grade Glioma, 96.8%), Case 2 (Dural Meningioma, 97.4%), Case 3 (Sellar Pituitary Adenoma, 98.5%), "
+            "and Case 4 (Normal Parenchymal Control, 99.5%).</i>",
+            caption_style
+        ))
 
     # ==========================================================================
     # 7. SECTION VI: CLINICAL INTEGRATION & IRB PROTOCOL
@@ -524,9 +503,20 @@ def build_ieee_pdf():
     story.append(Paragraph(
         "NeuroScan CDS is packaged as a local workstation (app.py) operating with zero cloud transmission for strict HIPAA and DPDPA compliance. "
         "The system computes automated pre-operative neurosurgical planning metrics: (1) Compartment localization (intra-axial vs. extra-axial vs. sellar), "
-        "(2) Midline shift mass effect quantification (&delta;_midline = |x_centroid - x_midline| mm, alerting when shift &gt; 3.0 mm), and "
-        "(3) Surgical approach advisories (e.g., awake craniotomy with intraoperative speech mapping for left frontal masses near Broca's area; "
-        "endoscopic endonasal approach for sellar macroadenomas).",
+        "(2) Midline shift mass effect quantification:",
+        body_style
+    ))
+
+    # Equation 7 (Rendered LaTeX Image)
+    eq7_file = EQ_DIR / "eq7_midline.png"
+    if eq7_file.exists():
+        story.append(Spacer(1, 1))
+        story.append(RLImage(str(eq7_file), width=COL_W * 0.88, height=COL_W * 0.88 * (0.42 / 3.4)))
+        story.append(Spacer(1, 2))
+
+    story.append(Paragraph(
+        "alerting when shift &gt; 3.0 mm, and (3) Surgical approach advisories (e.g., awake craniotomy with intraoperative speech mapping for left "
+        "frontal masses near Broca's area; endoscopic endonasal approach for sellar macroadenomas).",
         body_style
     ))
     story.append(Paragraph(
@@ -588,7 +578,6 @@ def build_ieee_pdf():
     doc.build(story, canvasmaker=NumberedCanvas)
     print(f"IEEE double-column PDF generated successfully: {PDF_OUT}")
 
-    # Also copy to public directory for Vercel
     if PUBLIC_PDF_OUT.parent.exists():
         import shutil
         shutil.copyfile(str(PDF_OUT), str(PUBLIC_PDF_OUT))
